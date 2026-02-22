@@ -4,6 +4,7 @@
     "description": "Executes smart selected Python lines.",
     "version": "0.1.0",
     "publisher": "bitagoras",
+    "repository": "https://github.com/bitagoras/pylot",
     "engines": {
         "vscode": "^1.85.0"
     },
