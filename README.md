@@ -1,4 +1,4 @@
-# Pylot - Python Execution Runner
+# Pylot - Python line runner pilot
 
 <div align="center">
 <img src="pylot.png" alt="Pylot Logo" width="150" />
