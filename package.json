@@ -1,0 +1,91 @@
+{
+    "name": "pylot",
+    "displayName": "Python Execution Runner",
+    "description": "Executes smart selected Python lines.",
+    "version": "0.1.0",
+    "publisher": "bitagoras",
+    "engines": {
+        "vscode": "^1.85.0"
+    },
+    "categories": [
+        "Other"
+    ],
+    "activationEvents": [
+        "onLanguage:python"
+    ],
+    "main": "./extension.js",
+    "icon": "pylot.png",
+    "contributes": {
+        "commands": [
+            {
+                "command": "pylot.executeSelectedPython",
+                "title": "Pylot: Execute Selected Python"
+            },
+            {
+                "command": "pylot.executeSelectedPythonNoMove",
+                "title": "Pylot: Execute Selected Python (No Cursor Move)"
+            },
+            {
+                "command": "pylot.restartRepl",
+                "title": "Pylot: Restart Python REPL"
+            },
+            {
+                "command": "pylot.clearOutput",
+                "title": "Pylot: Clear Python Output"
+            },
+            {
+                "command": "pylot.removeColorMarks",
+                "title": "Pylot: Remove All Color Marks"
+            },
+            {
+                "command": "pylot.evaluateExpression",
+                "title": "Pylot: Evaluate Python Expression"
+            }
+        ],
+        "keybindings": [
+            {
+                "command": "pylot.clearOutput",
+                "key": "ctrl+shift+c",
+                "when": "editorTextFocus && editorLangId == python"
+            },
+            {
+                "command": "pylot.executeSelectedPython",
+                "key": "shift+enter",
+                "when": "editorTextFocus && editorLangId == python && !findInputFocussed && !replaceInputFocussed && !suggestWidgetVisible && editorHasSelection"
+            },
+            {
+                "command": "pylot.executeSelectedPython",
+                "key": "shift+enter",
+                "when": "editorTextFocus && editorLangId == python && !findInputFocussed && !replaceInputFocussed && !suggestWidgetVisible && !editorHasSelection"
+            },
+            {
+                "command": "pylot.evaluateExpression",
+                "key": "ctrl+alt+space",
+                "when": "editorTextFocus && editorLangId == python && editorHasSelection"
+            },
+            {
+                "command": "pylot.executeSelectedPythonNoMove",
+                "key": "shift+ctrl+enter",
+                "when": "editorTextFocus && editorLangId == python && !findInputFocussed && !replaceInputFocussed && !suggestWidgetVisible && editorHasSelection"
+            },
+            {
+                "command": "pylot.executeSelectedPythonNoMove",
+                "key": "shift+ctrl+enter",
+                "when": "editorTextFocus && editorLangId == python && !findInputFocussed && !replaceInputFocussed && !suggestWidgetVisible && !editorHasSelection"
+            }
+        ]
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run compile",
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./"
+    },
+    "devDependencies": {
+        "@types/vscode": "^1.85.0",
+        "@types/node": "18.x",
+        "typescript": "^5.3.3"
+    },
+    "extensionDependencies": [
+        "ms-python.python"
+    ]
+}
