@@ -1,8 +1,8 @@
 {
     "name": "pylot",
-    "displayName": "Python Execution Runner",
-    "description": "Executes smart selected Python lines.",
-    "version": "0.1.0",
+    "displayName": "Python code line runner",
+    "description": "Executes lines of Python code with smart selection.",
+    "version": "0.3.0",
     "publisher": "bitagoras",
     "repository": "https://github.com/bitagoras/pylot",
     "engines": {

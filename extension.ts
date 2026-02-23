@@ -397,56 +397,89 @@ while True:
             outputChannel.show(true);
         }
 
-        // Smart selection expansion
+// Smart selection expansion
         let codeToExecute = editor.document.getText(selection);
         let executionSelection = selection;
 
-        try {
-            // Expand selection to full lines first to ensure we catch the context
-            const fullLineSelection = new vscode.Selection(
-                new vscode.Position(selection.start.line, 0),
-                new vscode.Position(selection.end.line, editor.document.lineAt(selection.end.line).range.end.character)
-            );
+        // 1. Pre-trim the selection to exclude leading/trailing empty lines and comments
+        let initialStartLine = selection.start.line;
+        let initialEndLine = selection.end.line;
 
+        while (initialStartLine <= initialEndLine) {
+            const text = editor.document.lineAt(initialStartLine).text.trim();
+            if (text.length > 0 && !text.startsWith('#')) break;
+            initialStartLine++;
+        }
+
+        while (initialEndLine >= initialStartLine) {
+            const text = editor.document.lineAt(initialEndLine).text.trim();
+            if (text.length > 0 && !text.startsWith('#')) break;
+            initialEndLine--;
+        }
+
+        // Fallback: If the user selected ONLY comments/empty lines, revert to the original bounds
+        if (initialStartLine > initialEndLine) {
+            initialStartLine = selection.start.line;
+            initialEndLine = selection.end.line;
+        }
+
+        const preTrimmedSelection = new vscode.Selection(
+            new vscode.Position(initialStartLine, 0),
+            new vscode.Position(initialEndLine, editor.document.lineAt(initialEndLine).range.end.character)
+        );
+
+        try {
+            // 2. Fetch selection ranges for BOTH the trimmed start and end
             const ranges = await vscode.commands.executeCommand<vscode.SelectionRange[]>(
                 'vscode.executeSelectionRangeProvider',
                 editor.document.uri,
-                [fullLineSelection.start]
+                [preTrimmedSelection.start, preTrimmedSelection.end]
             );
 
             if (ranges && ranges.length > 0) {
-                let current: vscode.SelectionRange | undefined = ranges[0];
-                const chain: vscode.SelectionRange[] = [];
-                while (current) {
-                    chain.push(current);
-                    current = current.parent;
-                }
+                const docRange = new vscode.Range(
+                    0, 0,
+                    editor.document.lineCount - 1,
+                    editor.document.lineAt(editor.document.lineCount - 1).text.length
+                );
 
-                // Find all ranges that fully contain the user's (full-line) selection
-                const candidates = chain.filter(r => r.range.contains(fullLineSelection));
-
-                let bestRange: vscode.Range | null = null;
-
-                if (candidates.length >= 2) {
-                    // Pick the largest range that is NOT the root (Module)
-                    bestRange = candidates[candidates.length - 2].range;
-                } else if (candidates.length === 1) {
-                    // Only one candidate. Check if it's the whole document.
-                    const r = candidates[0].range;
-                    const docRange = new vscode.Range(
-                        0, 0,
-                        editor.document.lineCount - 1,
-                        editor.document.lineAt(editor.document.lineCount - 1).text.length
-                    );
-
-                    if (!r.isEqual(docRange)) {
-                        bestRange = r;
+                // Helper to extract the topmost block (largest range not equal to the entire document)
+                const getTopBlock = (selectionRange: vscode.SelectionRange): vscode.Range => {
+                    let current: vscode.SelectionRange | undefined = selectionRange;
+                    const chain: vscode.SelectionRange[] = [];
+                    while (current) {
+                        chain.push(current);
+                        current = current.parent;
                     }
+
+                    // Traverse from the top down to find the first range that is not the whole document
+                    for (let i = chain.length - 1; i >= 0; i--) {
+                        const r = chain[i].range;
+                        const isWholeDoc = (r.start.line === docRange.start.line && r.end.line === docRange.end.line);
+                        if (!isWholeDoc) {
+                            return r;
+                        }
+                    }
+                    return chain[0].range;
+                };
+
+                // Find top-level blocks for both ends of the pre-trimmed selection
+                const startBlockRange = getTopBlock(ranges[0]);
+                const endBlockRange = ranges.length > 1 ? getTopBlock(ranges[1]) : startBlockRange;
+
+                // Span from the start of the first block to the end of the last block
+                let finalStart = startBlockRange.start;
+                let finalEnd = endBlockRange.end;
+
+                // 3. Ensure we never decrease the user's *pre-trimmed* selection
+                if (preTrimmedSelection.start.isBefore(finalStart)) {
+                    finalStart = preTrimmedSelection.start;
+                }
+                if (preTrimmedSelection.end.isAfter(finalEnd)) {
+                    finalEnd = preTrimmedSelection.end;
                 }
 
-                if (bestRange) {
-                    executionSelection = new vscode.Selection(bestRange.start, bestRange.end);
-                }
+                executionSelection = new vscode.Selection(finalStart, finalEnd);
             }
         } catch (e) {
             console.error("Error expanding selection:", e);
