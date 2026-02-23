@@ -410,11 +410,29 @@ async function executeSelectedPython(editor: vscode.TextEditor, moveCursor: bool
                     nextLine++;
                 }
 
-                // If a valid line is found, move the cursor there.
-                // If not (reached end of file), do nothing as requested.
                 if (nextLine < editor.document.lineCount) {
                     const line = editor.document.lineAt(nextLine);
                     const newPos = new vscode.Position(nextLine, line.firstNonWhitespaceCharacterIndex);
+                    editor.selection = new vscode.Selection(newPos, newPos);
+                    editor.revealRange(new vscode.Range(newPos, newPos));
+                } else {
+                    // At end of file - check if cursor is already at an empty line after last executable content
+                    const currentLineText = editor.document.lineAt(selection.start.line).text;
+                    if (currentLineText.trim().length === 0) {
+                        // Already at an empty line, stay there
+                        return;
+                    }
+                    // Move to line after selection, inserting newline if needed
+                    const targetLine = selection.end.line + 1;
+                    if (targetLine >= editor.document.lineCount) {
+                        // Insert a newline at the end of the document
+                        const lastLine = editor.document.lineAt(editor.document.lineCount - 1);
+                        const edit = new vscode.WorkspaceEdit();
+                        edit.insert(editor.document.uri, lastLine.range.end, '\n');
+                        await vscode.workspace.applyEdit(edit);
+                    }
+                    // Move the cursor to the new empty line
+                    const newPos = new vscode.Position(targetLine, 0);
                     editor.selection = new vscode.Selection(newPos, newPos);
                     editor.revealRange(new vscode.Range(newPos, newPos));
                 }
@@ -533,6 +551,26 @@ async function executeSelectedPython(editor: vscode.TextEditor, moveCursor: bool
                 const newPos = new vscode.Position(nextLine, line.firstNonWhitespaceCharacterIndex);
                 editor.selection = new vscode.Selection(newPos, newPos);
                 editor.revealRange(new vscode.Range(newPos, newPos));
+            } else {
+                // At end of file - check if cursor is already at an empty line after last executable content
+                const currentLineText = editor.document.lineAt(selection.start.line).text;
+                if (currentLineText.trim().length === 0) {
+                    // Already at an empty line, stay there - don't move cursor
+                } else {
+                    // Move to line after the block, inserting newline if needed
+                    const targetLine = executionSelection.end.line + 1;
+                    if (targetLine >= editor.document.lineCount) {
+                        // Insert a newline at the end of the document
+                        const lastLine = editor.document.lineAt(editor.document.lineCount - 1);
+                        const edit = new vscode.WorkspaceEdit();
+                        edit.insert(editor.document.uri, lastLine.range.end, '\n');
+                        await vscode.workspace.applyEdit(edit);
+                    }
+                    // Move the cursor to the new empty line
+                    const newPos = new vscode.Position(targetLine, 0);
+                    editor.selection = new vscode.Selection(newPos, newPos);
+                    editor.revealRange(new vscode.Range(newPos, newPos));
+                }
             }
         }
 
