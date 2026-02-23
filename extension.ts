@@ -375,31 +375,11 @@ while True:
         vscode.window.showInformationMessage('All Pylot color marks removed.');
     });
 
-    // Helper function to execute Python code (with configurable cursor movement)
-    async function executeSelectedPython(editor: vscode.TextEditor, moveCursor: boolean): Promise<void> {
+async function executeSelectedPython(editor: vscode.TextEditor, moveCursor: boolean): Promise<void> {
         const selection = editor.selection;
 
         const pythonPath = await getPythonPath();
         if (!pythonPath) { return; }
-
-        // Start REPL if not running or if Python path changed
-        if (!pythonRepl || !replReady || currentPythonPath !== pythonPath || DEBUG_MODE) {
-            stopRepl();
-            outputChannel.clear();
-            outputChannel.show(true);
-
-            const success = await startRepl(pythonPath);
-            if (!success) {
-                vscode.window.showErrorMessage('Failed to start Python REPL. See "pylot" in Output.');
-                return;
-            }
-        } else {
-            outputChannel.show(true);
-        }
-
-// Smart selection expansion
-        let codeToExecute = editor.document.getText(selection);
-        let executionSelection = selection;
 
         // 1. Pre-trim the selection to exclude leading/trailing empty lines and comments
         let initialStartLine = selection.start.line;
@@ -417,19 +397,56 @@ while True:
             initialEndLine--;
         }
 
-        // Fallback: If the user selected ONLY comments/empty lines, revert to the original bounds
+        // --- NEW LOGIC FOR EMPTY/COMMENT SELECTIONS ---
         if (initialStartLine > initialEndLine) {
-            initialStartLine = selection.start.line;
-            initialEndLine = selection.end.line;
+            if (moveCursor) {
+                // Find the next valid line starting from the line AFTER the current selection's end
+                let nextLine = selection.end.line + 1;
+                while (nextLine < editor.document.lineCount) {
+                    const lineText = editor.document.lineAt(nextLine).text;
+                    if (lineText.trim().length > 0 && !lineText.trim().startsWith('#')) {
+                        break;
+                    }
+                    nextLine++;
+                }
+
+                // If a valid line is found, move the cursor there.
+                // If not (reached end of file), do nothing as requested.
+                if (nextLine < editor.document.lineCount) {
+                    const line = editor.document.lineAt(nextLine);
+                    const newPos = new vscode.Position(nextLine, line.firstNonWhitespaceCharacterIndex);
+                    editor.selection = new vscode.Selection(newPos, newPos);
+                    editor.revealRange(new vscode.Range(newPos, newPos));
+                }
+            }
+            return; // Exit early: No execution, no markers changed
         }
+        // --- END OF NEW LOGIC ---
 
         const preTrimmedSelection = new vscode.Selection(
             new vscode.Position(initialStartLine, 0),
             new vscode.Position(initialEndLine, editor.document.lineAt(initialEndLine).range.end.character)
         );
 
+        // Start REPL if not running...
+        if (!pythonRepl || !replReady || currentPythonPath !== pythonPath || DEBUG_MODE) {
+            stopRepl();
+            outputChannel.clear();
+            outputChannel.show(true);
+
+            const success = await startRepl(pythonPath);
+            if (!success) {
+                vscode.window.showErrorMessage('Failed to start Python REPL. See "pylot" in Output.');
+                return;
+            }
+        } else {
+            outputChannel.show(true);
+        }
+
+        let executionSelection = preTrimmedSelection;
+
         try {
-            // 2. Fetch selection ranges for BOTH the trimmed start and end
+            // 2. Fetch selection ranges for expansion
             const ranges = await vscode.commands.executeCommand<vscode.SelectionRange[]>(
                 'vscode.executeSelectionRangeProvider',
                 editor.document.uri,
@@ -443,7 +460,6 @@ while True:
                     editor.document.lineAt(editor.document.lineCount - 1).text.length
                 );
 
-                // Helper to extract the topmost block (largest range not equal to the entire document)
                 const getTopBlock = (selectionRange: vscode.SelectionRange): vscode.Range => {
                     let current: vscode.SelectionRange | undefined = selectionRange;
                     const chain: vscode.SelectionRange[] = [];
@@ -451,33 +467,22 @@ while True:
                         chain.push(current);
                         current = current.parent;
                     }
-
-                    // Traverse from the top down to find the first range that is not the whole document
                     for (let i = chain.length - 1; i >= 0; i--) {
                         const r = chain[i].range;
                         const isWholeDoc = (r.start.line === docRange.start.line && r.end.line === docRange.end.line);
-                        if (!isWholeDoc) {
-                            return r;
-                        }
+                        if (!isWholeDoc) return r;
                     }
                     return chain[0].range;
                 };
 
-                // Find top-level blocks for both ends of the pre-trimmed selection
                 const startBlockRange = getTopBlock(ranges[0]);
                 const endBlockRange = ranges.length > 1 ? getTopBlock(ranges[1]) : startBlockRange;
 
-                // Span from the start of the first block to the end of the last block
                 let finalStart = startBlockRange.start;
                 let finalEnd = endBlockRange.end;
 
-                // 3. Ensure we never decrease the user's *pre-trimmed* selection
-                if (preTrimmedSelection.start.isBefore(finalStart)) {
-                    finalStart = preTrimmedSelection.start;
-                }
-                if (preTrimmedSelection.end.isAfter(finalEnd)) {
-                    finalEnd = preTrimmedSelection.end;
-                }
+                if (preTrimmedSelection.start.isBefore(finalStart)) finalStart = preTrimmedSelection.start;
+                if (preTrimmedSelection.end.isAfter(finalEnd)) finalEnd = preTrimmedSelection.end;
 
                 executionSelection = new vscode.Selection(finalStart, finalEnd);
             }
@@ -485,20 +490,9 @@ while True:
             console.error("Error expanding selection:", e);
         }
 
-        // Do NOT update editor.selection here to avoid visual selection change
         let startLine = executionSelection.start.line;
         let endLine = executionSelection.end.line;
         let code = editor.document.getText(executionSelection);
-
-        if (DEBUG_MODE) {
-            outputChannel.clear();
-            outputChannel.show(true);
-            outputChannel.appendLine("=== DEBUG MODE ===");
-            outputChannel.appendLine("--- Selected Code ---");
-            outputChannel.appendLine(code);
-            outputChannel.appendLine("---------------------");
-            return;
-        }
 
         const command = {
             code: JSON.stringify(code),
@@ -506,36 +500,31 @@ while True:
             start_line: startLine + 1
         };
 
-        // Trim leading empty lines
-        while (startLine <= endLine && editor.document.lineAt(startLine).text.trim() === '') {
+        // Tighten range for visual decorations
+        while (startLine <= endLine) {
+            const text = editor.document.lineAt(startLine).text.trim();
+            if (text.length > 0 && !text.startsWith('#')) break;
             startLine++;
         }
-
-        // Trim trailing empty lines
-        while (endLine >= startLine && editor.document.lineAt(endLine).text.trim() === '') {
+        while (endLine >= startLine) {
+            const text = editor.document.lineAt(endLine).text.trim();
+            if (text.length > 0 && !text.startsWith('#')) break;
             endLine--;
         }
 
-        // Create the trimmed range for decorations
         const trimmedRange = new vscode.Range(
             new vscode.Position(startLine, 0),
             new vscode.Position(endLine, editor.document.lineAt(endLine).text.length)
         );
 
-        // Store original selection for potential restoration on error
         const originalSelection = editor.selection;
-
-        // Check if execution can start (REPL ready and no other execution running)
         const canExecute = pythonRepl !== null && replReady && currentExecutionCallback === null;
 
         if (canExecute && moveCursor) {
-            // Move cursor to next executable block BEFORE execution (only if moveCursor is true)
             let nextLine = executionSelection.end.line + 1;
             while (nextLine < editor.document.lineCount) {
                 const lineText = editor.document.lineAt(nextLine).text;
-                if (lineText.trim().length > 0 && !lineText.trim().startsWith('#')) {
-                    break;
-                }
+                if (lineText.trim().length > 0 && !lineText.trim().startsWith('#')) break;
                 nextLine++;
             }
 
@@ -547,24 +536,18 @@ while True:
             }
         }
 
-        // Execute in persistent REPL
         const result = await executeInRepl(command, editor, trimmedRange, canExecute);
 
-        // Only update decorations and move cursor if code was actually executed
         if (result.executed) {
             editor.setDecorations(runningDecoration, []);
             if (result.success) {
-                // Cursor was already moved before execution (if moveCursor was true)
                 editor.setDecorations(executedDecoration, [trimmedRange]);
             } else {
                 editor.setDecorations(errorDecoration, [trimmedRange]);
-
-                // Restore cursor on error
                 editor.selection = originalSelection;
                 editor.revealRange(originalSelection);
             }
         } else {
-            // Execution was blocked (another execution is running) - restore cursor to original position
             editor.selection = originalSelection;
             editor.revealRange(originalSelection);
         }
