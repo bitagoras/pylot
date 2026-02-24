@@ -1,10 +1,10 @@
-# Pylot - Python line runner pilot
+# Pylot - Python line runner
 
 <div align="center">
 <img src="pylot.png" alt="Pylot Logo" width="150" />
 </div>
 
-A VSCode extension that marks and executes selected Python lines with a persistent REPL.
+A VSCode extension that runs lines of Python code with visualized smart selection.
 
 ## Features
 
@@ -13,6 +13,7 @@ A VSCode extension that marks and executes selected Python lines with a persiste
   - 🟠 Orange: Currently running
   - 🟢 Green: Successfully executed
   - 🔴 Red: Error occurred
+- **Clean Output Window** - Output is displayed in a dedicated panel, without repeating the code lines.
 - **Persistent REPL** - Maintains state between executions
 - **Restart REPL** - Clear and restart the Python REPL session
 - **Clear Output** - Clear the output channel
