@@ -91,6 +91,8 @@ export function activate(context: vscode.ExtensionContext) {
     // Persistent REPL wrapper code
     const replWrapperCode = `
 import sys, json, traceback
+import threading
+import queue
 
 # Marker to indicate readiness
 READY_MARKER = "<<<PYLOT_READY>>>"
@@ -101,15 +103,62 @@ TYPE_MARKER = "<<<PYLOT_TYPE:"
 # Signal that we're ready to receive commands
 print(READY_MARKER, flush=True)
 
-# Keep a persistent global namespace
-persistent_globals = {}
+# Keep a persistent global namespace, properly initialized
+persistent_globals = {'__name__': '__main__', '__doc__': None}
+
+# Use a queue and a background thread to read stdin
+# This allows the main thread to remain unblocked to pump GUI events
+input_queue = queue.Queue()
+
+def read_stdin():
+    while True:
+        try:
+            line = sys.stdin.readline()
+            if not line:
+                input_queue.put(None)
+                break
+            input_queue.put(line)
+        except Exception:
+            break
+
+# Start background thread to listen for VS Code commands
+stdin_thread = threading.Thread(target=read_stdin, daemon=True)
+stdin_thread.start()
 
 while True:
     try:
-        # Read one line containing the JSON command
-        line = sys.stdin.readline()
-        if not line:
-            break
+        # 1. Wait for input with a small timeout to allow UI updates
+        try:
+            line = input_queue.get(timeout=0.05)
+            if line is None:
+                break # EOF reached
+        except queue.Empty:
+            # 2. Check if matplotlib is loaded and pump its events safely
+            if 'matplotlib.pyplot' in sys.modules:
+                try:
+                    plt = sys.modules['matplotlib.pyplot']
+
+                    # Initialize our patches once
+                    if not getattr(plt, '_pylot_patched', False):
+                        plt.ion() # Automatically enable interactive mode
+
+                        # Monkey-patch plt.show to always be non-blocking natively
+                        original_show = plt.show
+                        def non_blocking_show(*args, **kwargs):
+                            kwargs['block'] = False
+                            original_show(*args, **kwargs)
+                        plt.show = non_blocking_show
+
+                        plt._pylot_patched = True
+
+                    # Quietly pump events for all open figures without stealing focus
+                    if hasattr(plt, '_pylab_helpers'):
+                        for manager in plt._pylab_helpers.Gcf.get_all_fig_managers():
+                            if hasattr(manager.canvas, 'flush_events'):
+                                manager.canvas.flush_events()
+                except Exception:
+                    pass # Safely ignore errors during event pumping
+            continue
 
         command = json.loads(line.strip())
         code = command['code']

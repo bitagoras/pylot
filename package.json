@@ -2,7 +2,7 @@
     "name": "pylot",
     "displayName": "Python line runner",
     "description": "Executes lines of Python code with visualized smart selection.",
-    "version": "0.3.3",
+    "version": "0.4.0",
     "publisher": "bitagoras",
     "repository": "https://github.com/bitagoras/pylot",
     "engines": {

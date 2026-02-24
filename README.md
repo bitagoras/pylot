@@ -14,6 +14,7 @@ A VSCode extension that runs lines of Python code with visualized smart selectio
 - **Restart REPL** - Clear and restart the Python REPL session
 - **Clear Output** - Clear the output channel
 - **Evaluate Expression** - Quick evaluation of selected Python expressions
+- **Matplotlib Event Handler** - Keeps Matplotlib plot windows open and allows multiple interactive figures to remain visible when plotting
 
 <br>
 
