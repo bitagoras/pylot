@@ -465,47 +465,101 @@ async function executeSelectedPython(editor: vscode.TextEditor, moveCursor: bool
 
         try {
             // 2. Fetch selection ranges for expansion
-            const ranges = await vscode.commands.executeCommand<vscode.SelectionRange[]>(
-                'vscode.executeSelectionRangeProvider',
-                editor.document.uri,
-                [preTrimmedSelection.start, preTrimmedSelection.end]
-            );
+
+            // ADJUSTMENT 1: Shift query positions completely out of comments into code.
+            let queryStart = preTrimmedSelection.start;
+            let queryEnd = preTrimmedSelection.end;
+
+            const startLine = editor.document.lineAt(queryStart.line);
+            const startCommentIdx = startLine.text.indexOf('#');
+            // If at or after a '#', move strictly to the code (first non-whitespace character)
+            if (startCommentIdx !== -1 && queryStart.character >= startCommentIdx) {
+                queryStart = new vscode.Position(queryStart.line, startLine.firstNonWhitespaceCharacterIndex);
+            }
+
+            const endLine = editor.document.lineAt(queryEnd.line);
+            const endCommentIdx = endLine.text.indexOf('#');
+            if (endCommentIdx !== -1 && queryEnd.character >= endCommentIdx) {
+                queryEnd = new vscode.Position(queryEnd.line, endLine.firstNonWhitespaceCharacterIndex);
+            }
+
+            // FIX: Changed 'yield' to 'await'
+            const ranges: any = await vscode.commands.executeCommand('vscode.executeSelectionRangeProvider', editor.document.uri, [queryStart, queryEnd]);
+
+            // NEW LOGIC: Abort if the language server returns nothing during startup
+            if (!ranges || ranges.length === 0) {
+                vscode.window.showWarningMessage("Pylot: Language server is still initializing. Please wait a moment.");
+                return;
+            }
 
             if (ranges && ranges.length > 0) {
-                const docRange = new vscode.Range(
-                    0, 0,
-                    editor.document.lineCount - 1,
-                    editor.document.lineAt(editor.document.lineCount - 1).text.length
-                );
+                // ADJUSTMENT 2: Calculate semantic document boundaries (ignoring trailing whitespace)
+                let firstCodeLine = 0;
+                while (firstCodeLine < editor.document.lineCount && editor.document.lineAt(firstCodeLine).text.trim() === '') {
+                    firstCodeLine++;
+                }
+                let lastCodeLine = editor.document.lineCount - 1;
+                while (lastCodeLine >= 0 && editor.document.lineAt(lastCodeLine).text.trim() === '') {
+                    lastCodeLine--;
+                }
 
-                const getTopBlock = (selectionRange: vscode.SelectionRange): vscode.Range => {
-                    let current: vscode.SelectionRange | undefined = selectionRange;
-                    const chain: vscode.SelectionRange[] = [];
+                const getTopBlock = (selectionRange: any) => {
+                    let current = selectionRange;
+                    const chain = [];
                     while (current) {
                         chain.push(current);
                         current = current.parent;
                     }
+
+                    // ROBUST CHECK: If the narrowest range (chain[0]) is ALREADY the whole document,
+                    // the LS failed to find a localized AST node (e.g., stuck in whitespace/comment).
+                    const narrowestRange = chain[0].range;
+                    if (narrowestRange.start.line <= firstCodeLine && narrowestRange.end.line >= lastCodeLine) {
+                        return null; // Return null to signal invalid expansion
+                    }
+
+                    // Walk down from the largest blocks
                     for (let i = chain.length - 1; i >= 0; i--) {
                         const r = chain[i].range;
-                        const isWholeDoc = (r.start.line === docRange.start.line && r.end.line === docRange.end.line);
-                        if (!isWholeDoc) return r;
+
+                        const isWholeDoc = (r.start.line <= firstCodeLine && r.end.line >= lastCodeLine);
+                        if (!isWholeDoc) {
+                            return r;
+                        }
                     }
-                    return chain[0].range;
+                    return narrowestRange; // Fallback to the narrowest statement
                 };
 
                 const startBlockRange = getTopBlock(ranges[0]);
                 const endBlockRange = ranges.length > 1 ? getTopBlock(ranges[1]) : startBlockRange;
 
-                let finalStart = startBlockRange.start;
-                let finalEnd = endBlockRange.end;
+                // Fall back to the original selection if the LS returned an unhelpful scope
+                if (!startBlockRange || !endBlockRange) {
+                    executionSelection = preTrimmedSelection;
+                } else {
+                    let finalStart = startBlockRange.start;
+                    let finalEnd = endBlockRange.end;
 
-                if (preTrimmedSelection.start.isBefore(finalStart)) finalStart = preTrimmedSelection.start;
-                if (preTrimmedSelection.end.isAfter(finalEnd)) finalEnd = preTrimmedSelection.end;
+                    if (preTrimmedSelection.start.isBefore(finalStart))
+                        finalStart = preTrimmedSelection.start;
+                    if (preTrimmedSelection.end.isAfter(finalEnd))
+                        finalEnd = preTrimmedSelection.end;
 
-                executionSelection = new vscode.Selection(finalStart, finalEnd);
+                    // Safety check limit (still good to keep as a failsafe)
+                    const originalLineCount = preTrimmedSelection.end.line - preTrimmedSelection.start.line + 1;
+                    const expandedLineCount = finalEnd.line - finalStart.line + 1;
+                    if (expandedLineCount > 100 && originalLineCount < 10) {
+                        executionSelection = preTrimmedSelection;
+                    } else {
+                        executionSelection = new vscode.Selection(finalStart, finalEnd);
+                    }
+                }
             }
         } catch (e) {
             console.error("Error expanding selection:", e);
+            // NEW LOGIC: Abort execution completely if the language server throws an error (e.g., not ready)
+            vscode.window.showWarningMessage("Pylot: Language server is starting up. Please wait.");
+            return;
         }
 
         let startLine = executionSelection.start.line;
