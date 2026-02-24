@@ -40,12 +40,12 @@ export function activate(context: vscode.ExtensionContext) {
 
     const executedSvg = `data:image/svg+xml;utf8,
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 10" preserveAspectRatio="none">
-            <rect x="2" y="0" width="0.75" height="10" fill="rgb(0, 255, 0)" fill-opacity="0.5" />
+            <rect x="2" y="0" width="0.75" height="10" fill="rgb(0, 255, 0)" fill-opacity="0.8" />
         </svg>`;
 
     const errorSvg = `data:image/svg+xml;utf8,
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 10" preserveAspectRatio="none">
-            <rect x="2" y="0" width="0.75" height="10" fill="rgb(255, 0, 0)" fill-opacity="0.5" />
+            <rect x="2" y="0" width="0.75" height="10" fill="rgb(255, 0, 0)" fill-opacity="0.8" />
         </svg>`;
 
     // Create the Decoration Types for each state

@@ -1,9 +1,5 @@
 # Pylot - Python line runner
 
-<div align="center">
-<img src="pylot.png" alt="Pylot Logo" width="150" />
-</div>
-
 A VSCode extension that runs lines of Python code with visualized smart selection.
 
 ## Features
@@ -18,6 +14,12 @@ A VSCode extension that runs lines of Python code with visualized smart selectio
 - **Restart REPL** - Clear and restart the Python REPL session
 - **Clear Output** - Clear the output channel
 - **Evaluate Expression** - Quick evaluation of selected Python expressions
+
+<br>
+
+<div align="left">
+<img src="pylot.gif" alt="Pylot Demo" width="763" />
+</div>
 
 ## Requirements
 
