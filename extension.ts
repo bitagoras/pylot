@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { spawn, ChildProcess } from 'child_process';
+import * as path from 'path';
 
 // A type definition for the Python extension's API
 interface PythonExtensionApi {
@@ -156,11 +157,36 @@ while True:
         print(ERROR_MARKER, flush=True)
 `;
 
-    // Function to start the persistent REPL
+// Function to start the persistent REPL
     async function startRepl(pythonPath: string): Promise<boolean> {
         return new Promise((resolve) => {
             try {
-                pythonRepl = spawn(pythonPath, ['-u', '-c', replWrapperCode]);
+                // --- NEW FIX: Patch environment variables to prevent DLL load crashes ---
+                const pythonDir = path.dirname(pythonPath);
+                const env: NodeJS.ProcessEnv = { ...process.env, PYTHONIOENCODING: 'utf-8' };
+
+                // Find the PATH key (it can be case-insensitive on Windows)
+                const pathKey = Object.keys(env).find(k => k.toLowerCase() === 'path') || 'PATH';
+                const separator = process.platform === 'win32' ? ';' : ':';
+
+                // Add common Conda/Venv binary directories to the PATH
+                let binPaths = '';
+                if (process.platform === 'win32') {
+                    binPaths = `${pythonDir}${separator}${path.join(pythonDir, 'Scripts')}${separator}${path.join(pythonDir, 'Library', 'bin')}${separator}`;
+                } else {
+                    binPaths = `${pythonDir}${separator}${path.join(pythonDir, 'bin')}${separator}`;
+                }
+                env[pathKey] = binPaths + (env[pathKey] || '');
+
+                // Fallback to current process directory if no workspace is open
+                const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
+
+                // Spawn with the patched environment and explicit cwd
+                pythonRepl = spawn(pythonPath, ['-u', '-c', replWrapperCode], {
+                    env: env,
+                    cwd: cwd
+                });
+
                 replReady = false;
                 currentPythonPath = pythonPath;
 
@@ -253,10 +279,10 @@ while True:
                     outputChannel.append(data.toString());
                 });
 
-                pythonRepl.on('close', () => {
+                pythonRepl.on('close', (code) => {
                     pythonRepl = null;
                     replReady = false;
-                    outputChannel.appendLine('[REPL process closed]');
+                    outputChannel.appendLine(`[REPL process closed with code ${code}]`);
                 });
 
                 pythonRepl.on('error', (err) => {
