@@ -7,14 +7,18 @@ A VSCode extension that runs lines of Python code with visualized smart selectio
 - **Execute Selected Python** - Run smart selected code in a persistent Python REPL
 - **Persistent REPL** - Maintains state and variables between executions
 - **Visual Line Markers** - See execution status with gutter icons:
-  - <span style="color:#f97316">▌</span> Currently running
-  - <span style="color:#22c55e">▌</span> Successfully executed
-  - <span style="color:#ef4444">▌</span> Error occurred
+  - 🟧 Orange (animated): Currently running
+  - 🟩 Greem: Successfully executed
+  - 🟥 Red: Error occurred
 - **Clean Output Window** - Output is displayed in a dedicated panel, without repeating the code lines.
 - **Restart REPL** - Clear and restart the Python REPL session
 - **Clear Output** - Clear the output channel
 - **Evaluate Expression** - Quick evaluation of selected Python expressions
 - **Matplotlib Event Handler** - Keeps Matplotlib plot windows open and allows multiple interactive figures to remain visible while doing further analysis
+
+`` Currently running
+`` Error occurred
+
 
 <br>
 
