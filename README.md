@@ -1,20 +1,20 @@
-# Pylot - Python line runner
+# Pylot - Python code runner
 
-A VSCode extension that runs lines of Python code with visualized smart selection.
+A VSCode extension that runs lines of Python code with visualized smart selection. In this interactive Python environment, commands are entered directly in the editor itself — not copied to the terminal — so the editor acts as the input interface, while outputs appear below in the output panel. By this approach the interactive session can be stored in the Python file and reproduced or finalized as a Python script.
 
 ## Features
 
-- **Execute Selected Python** - Run selected code in a persistent Python REPL
+- **Execute Selected Python** - Run smart selected code in a persistent Python REPL
+- **Persistent REPL** - Maintains state and variables between executions
 - **Visual Line Markers** - See execution status with gutter icons:
-  - 🟠 Orange: Currently running
-  - 🟢 Green: Successfully executed
-  - 🔴 Red: Error occurred
+  - <span style="color:#f97316">▌</span> Currently running
+  - <span style="color:#22c55e">▌</span> Successfully executed
+  - <span style="color:#ef4444">▌</span> Error occurred
 - **Clean Output Window** - Output is displayed in a dedicated panel, without repeating the code lines.
-- **Persistent REPL** - Maintains state between executions
 - **Restart REPL** - Clear and restart the Python REPL session
 - **Clear Output** - Clear the output channel
 - **Evaluate Expression** - Quick evaluation of selected Python expressions
-- **Matplotlib Event Handler** - Keeps Matplotlib plot windows open and allows multiple interactive figures to remain visible when plotting
+- **Matplotlib Event Handler** - Keeps Matplotlib plot windows open and allows multiple interactive figures to remain visible while doing further analysis
 
 <br>
 
@@ -62,6 +62,9 @@ This extension has no configurable settings. It uses the Python interpreter sele
 2. Go to Extensions (`Ctrl+Shift+X`)
 3. Search for "Pylot"
 4. Click Install
+5. Open command palette (`Ctrl+Shift+P`)
+6. Search for "Preferences: Open Keyboard Shortcuts"
+7. Remove `Shift+Enter` and `Ctrl+Shift+Enter` from other Python extensions.
 
 ## License
 
