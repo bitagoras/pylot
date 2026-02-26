@@ -16,10 +16,6 @@ A VSCode extension that runs lines of Python code with visualized smart selectio
 - **Evaluate Expression** - Quick evaluation of selected Python expressions
 - **Matplotlib Event Handler** - Keeps Matplotlib plot windows open and allows multiple interactive figures to remain visible while doing further analysis
 
-`` Currently running
-`` Error occurred
-
-
 <br>
 
 <div align="left">
