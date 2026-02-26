@@ -4,13 +4,12 @@ A VSCode extension that runs lines of Python code with visualized smart selectio
 
 ## Features
 
-- **Execute Selected Python** - Run smart selected code in a persistent Python REPL
-- **Persistent REPL** - Maintains state and variables between executions
-- **Visual Line Markers** - See execution status with gutter icons:
+- **Execute Selected Python** - Run selected code in a persistent Python REPL
+- **Clean Output Window** - Output is displayed in a dedicated panel, without repeating the code lines.
+- **Visual Line Markers** - See smart selection and execution status with gutter icons:
   - 🟧 Orange (animated): Currently running
   - 🟩 Greem: Successfully executed
   - 🟥 Red: Error occurred
-- **Clean Output Window** - Output is displayed in a dedicated panel, without repeating the code lines.
 - **Restart REPL** - Clear and restart the Python REPL session
 - **Clear Output** - Clear the output channel
 - **Evaluate Expression** - Quick evaluation of selected Python expressions
@@ -63,13 +62,12 @@ This extension contributes the following settings:
 
 ## Installation
 
-1. Open VS Code
-2. Go to Extensions (`Ctrl+Shift+X`)
-3. Search for "Pylot"
-4. Click Install
-5. Open command palette (`Ctrl+Shift+P`)
-6. Search for "Preferences: Open Keyboard Shortcuts"
-7. Remove `Shift+Enter` and `Ctrl+Shift+Enter` from other Python extensions.
+1. In VS Code go to Extensions (`Ctrl+Shift+X`)
+2. Search for "Pylot"
+3. Click Install
+4. Open command palette (`Ctrl+Shift+P`)
+5. Search for "Preferences: Open Keyboard Shortcuts"
+6. Remove `Shift+Enter` and `Ctrl+Shift+Enter` from other Python extensions.
 
 ## License
 
