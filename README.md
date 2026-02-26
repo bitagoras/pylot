@@ -54,7 +54,12 @@ A VSCode extension that runs lines of Python code with visualized smart selectio
 
 ## Extension Settings
 
-This extension has no configurable settings. It uses the Python interpreter selected in the Python extension.
+This extension contributes the following settings:
+
+* `pylot.matplotlibEventHandler`: Controls when the Matplotlib non-blocking event handler is injected into the REPL.
+  * `auto` (default): Detects the `matplotlib` keyword in the code to load the event handler beforehand.
+  * `always`: Always loads the event handler on REPL startup.
+  * `never`: Disables the custom event handler and non-blocking patches.
 
 ## Installation
 

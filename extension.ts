@@ -90,7 +90,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Persistent REPL wrapper code
     const replWrapperCode = `
-import sys, json, traceback
+import sys, json, traceback, os
 import threading
 import queue
 
@@ -107,8 +107,46 @@ print(READY_MARKER, flush=True)
 persistent_globals = {'__name__': '__main__', '__doc__': None}
 
 # Use a queue and a background thread to read stdin
-# This allows the main thread to remain unblocked to pump GUI events
 input_queue = queue.Queue()
+mpl_mode = os.environ.get('PYLOT_MPL_MODE', 'auto')
+
+def force_patch_matplotlib():
+    try:
+        import matplotlib.pyplot as plt
+        if getattr(plt, '_pylot_patched', False):
+            return
+        plt.ion() # Automatically enable interactive mode
+
+        # Monkey-patch plt.show to always be non-blocking natively
+        original_show = plt.show
+        def non_blocking_show(*args, **kwargs):
+            kwargs['block'] = False
+            original_show(*args, **kwargs)
+        plt.show = non_blocking_show
+
+        plt._pylot_patched = True
+    except Exception:
+        pass
+
+def pump_events():
+    if 'matplotlib.pyplot' not in sys.modules:
+        return
+    try:
+        plt = sys.modules['matplotlib.pyplot']
+        # Ensure patch is applied if imported manually without the keyword
+        if not getattr(plt, '_pylot_patched', False):
+            force_patch_matplotlib()
+
+        if hasattr(plt, '_pylab_helpers'):
+            for manager in plt._pylab_helpers.Gcf.get_all_fig_managers():
+                if hasattr(manager.canvas, 'flush_events'):
+                    manager.canvas.flush_events()
+    except Exception:
+        pass
+
+# Force load immediately if set to 'always'
+if mpl_mode == 'always':
+    force_patch_matplotlib()
 
 def read_stdin():
     while True:
@@ -133,31 +171,9 @@ while True:
             if line is None:
                 break # EOF reached
         except queue.Empty:
-            # 2. Check if matplotlib is loaded and pump its events safely
-            if 'matplotlib.pyplot' in sys.modules:
-                try:
-                    plt = sys.modules['matplotlib.pyplot']
-
-                    # Initialize our patches once
-                    if not getattr(plt, '_pylot_patched', False):
-                        plt.ion() # Automatically enable interactive mode
-
-                        # Monkey-patch plt.show to always be non-blocking natively
-                        original_show = plt.show
-                        def non_blocking_show(*args, **kwargs):
-                            kwargs['block'] = False
-                            original_show(*args, **kwargs)
-                        plt.show = non_blocking_show
-
-                        plt._pylot_patched = True
-
-                    # Quietly pump events for all open figures without stealing focus
-                    if hasattr(plt, '_pylab_helpers'):
-                        for manager in plt._pylab_helpers.Gcf.get_all_fig_managers():
-                            if hasattr(manager.canvas, 'flush_events'):
-                                manager.canvas.flush_events()
-                except Exception:
-                    pass # Safely ignore errors during event pumping
+            # 2. Quietly pump events for all open figures without stealing focus
+            if mpl_mode != 'never':
+                pump_events()
             continue
 
         command = json.loads(line.strip())
@@ -167,6 +183,10 @@ while True:
 
         # Parse JSON code (sent as stringified JSON)
         adjusted_code = json.loads(code)
+
+        # Auto-detect matplotlib keyword and patch BEFORE executing the block
+        if mpl_mode == 'auto' and 'matplotlib' in adjusted_code:
+            force_patch_matplotlib()
 
         # Try to exec as statement first
         is_expression = False
@@ -210,9 +230,16 @@ while True:
     async function startRepl(pythonPath: string): Promise<boolean> {
         return new Promise((resolve) => {
             try {
-                // --- NEW FIX: Patch environment variables to prevent DLL load crashes ---
+
+                const config = vscode.workspace.getConfiguration('pylot');
+                const mplMode = config.get<string>('matplotlibEventHandler', 'auto');
+
                 const pythonDir = path.dirname(pythonPath);
-                const env: NodeJS.ProcessEnv = { ...process.env, PYTHONIOENCODING: 'utf-8' };
+                const env: NodeJS.ProcessEnv = {
+                    ...process.env,
+                    PYTHONIOENCODING: 'utf-8',
+                    PYLOT_MPL_MODE: mplMode // Add the setting to the environment variables
+                };
 
                 // Find the PATH key (it can be case-insensitive on Windows)
                 const pathKey = Object.keys(env).find(k => k.toLowerCase() === 'path') || 'PATH';
