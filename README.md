@@ -1,19 +1,17 @@
-# Pylot - Python code runner
+# Pylot – Python code runner
 
-A VSCode extension that runs lines of Python code with visualized smart selection. In this interactive Python environment, commands are entered directly in the editor itself — not copied to the terminal — so the editor acts as the input interface, while outputs appear below in the output panel. By this approach the interactive session can be stored in the Python file and reproduced or finalized as a Python script.
+A VS Code extension that runs Python code directly from the editor with smart selection and visual line markers. Commands are entered in the editor itself — not copied to a terminal — so the editor acts as the input interface while results appear in a dedicated output panel. This lets you build up an interactive session that can be saved, reproduced, or finalized as a Python script.
 
 ## Features
 
-- **Execute Selected Python** - Run selected code in a persistent Python REPL
-- **Clean Output Window** - Output is displayed in a dedicated panel, without repeating the code lines.
-- **Visual Line Markers** - See smart selection and execution status with gutter icons:
-  - 🟧 Orange (animated): Currently running
-  - 🟩 Green: Successfully executed
-  - 🟥 Red: Error occurred
-- **Restart REPL** - Clear and restart the Python REPL session
-- **Clear Output** - Clear the output channel
-- **Evaluate Expression** - Quick evaluation of selected Python expressions
-- **Matplotlib Event Handler** - Keeps Matplotlib plot windows open and allows multiple interactive figures to remain visible while doing further analysis
+- **Execute Python code** – Run selected code (or the current block) in a persistent Python REPL with `Shift+Enter`.
+- **Clean output window** – Output is displayed in a dedicated panel, without repeating the code lines.
+- **Visual line markers** – Gutter icons show smart selection and execution state:
+  - 🟧 Orange (animated): currently running
+  - 🟩 Green: successfully executed
+  - 🟥 Red: error occurred
+- **Evaluate expression** – Quickly evaluate a selected expression and see the result in a popup (`Ctrl+Alt+Space`).
+- **Matplotlib support** – Keeps Matplotlib plot windows open and interactive while you continue working.
 
 <br>
 
@@ -23,51 +21,44 @@ A VSCode extension that runs lines of Python code with visualized smart selectio
 
 ## Requirements
 
-- [Python extension](https://marketplace.visualstudio.com/items?itemName=ms-python.python) (ms-python.python) - Required for Python interpreter detection
+- [Python extension](https://marketplace.visualstudio.com/items?itemName=ms-python.python) (`ms-python.python`) – installed automatically as a dependency.
 
 ## Usage
 
 ### Execute Selected Code
 
-1. Select Python code in your editor
-2. Press `Shift+Enter` to execute
-3. Results appear in the "pylot" output channel
+1. Place your cursor on a line or select a block of Python code.
+2. Press `Shift+Enter` to execute.
+3. Results appear in the **pylot** output channel.
+
+The extension uses the language server's smart selection to automatically expand your cursor to the enclosing top-level statement or block (function, class, etc.), so you rarely need to manually select code.
 
 ### Commands
 
 | Command | Action | Default Shortcut |
 |---------|--------|------------------|
-| Execute Selected Python | Run selected code | `Shift+Enter` |
-| Execute Selected Python (No Cursor Move) | Run selected code without moving cursor | `Shift+Ctrl+Enter` |
-| Restart Python REPL | Restart the REPL session | - |
+| Execute Selected Python | Run selected code and advance cursor | `Shift+Enter` |
+| Execute Selected Python (No Cursor Move) | Run selected code, keep cursor in place | `Shift+Ctrl+Enter` |
+| Restart Python REPL | Restart the REPL session | – |
 | Clear Python Output | Clear the output channel | `Ctrl+Shift+C` |
-| Remove All Color Marks | Remove all gutter markers | - |
-| Evaluate Python Expression | Quick evaluate expression | `Ctrl+Alt+Space` |
-
-### Keyboard Shortcuts
-
-- `Shift+Enter` - Execute selected Python code
-- `Shift+Ctrl+Enter` - Execute selected Python code without moving cursor
-- `Ctrl+Shift+C` - Clear output (when Python file is focused)
-- `Ctrl+Alt+Space` - Evaluate selected expression
+| Remove All Color Marks | Remove all gutter markers | – |
+| Evaluate Python Expression | Evaluate expression and show popup | `Ctrl+Alt+Space` |
 
 ## Extension Settings
 
-This extension contributes the following settings:
-
-* `pylot.matplotlibEventHandler`: Controls when the Matplotlib non-blocking event handler is injected into the REPL.
-  * `auto` (default): Detects the `matplotlib` keyword in the code to load the event handler beforehand.
-  * `always`: Always loads the event handler on REPL startup.
-  * `never`: Disables the custom event handler and non-blocking patches.
+* `pylot.matplotlibEventHandler` – Controls when the Matplotlib non-blocking event handler is injected into the REPL.
+  * `auto` (default) – Detects the `matplotlib` keyword in the code and loads the event handler before execution.
+  * `always` – Loads the event handler on REPL startup.
+  * `never` – Disables the custom event handler entirely.
 
 ## Installation
 
-1. In VS Code go to Extensions (`Ctrl+Shift+X`)
-2. Search for "Pylot"
-3. Click Install
-4. Open command palette (`Ctrl+Shift+P`)
-5. Search for "Preferences: Open Keyboard Shortcuts"
-6. Remove `Shift+Enter` and `Ctrl+Shift+Enter` from other Python extensions.
+1. Open **Extensions** in VS Code (`Ctrl+Shift+X`).
+2. Search for **Pylot** and click **Install**.
+3. The required Python extension (`ms-python.python`) will be installed automatically.
+4. If other Python extensions have claimed `Shift+Enter` or `Ctrl+Shift+Enter`, you may need to remove those bindings:
+   - Open the command palette (`Ctrl+Shift+P`) → **Preferences: Open Keyboard Shortcuts**.
+   - Search for the conflicting shortcut and remove or reassign it.
 
 ## License
 

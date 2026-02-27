@@ -2,7 +2,7 @@
     "name": "pylot",
     "displayName": "Pylot - Python code runner",
     "description": "Executes lines of Python code with visualized smart selection.",
-    "version": "0.5.1",
+    "version": "0.5.2",
     "publisher": "bitagoras",
     "repository": "https://github.com/bitagoras/pylot",
     "engines": {
@@ -72,12 +72,7 @@
             {
                 "command": "pylot.executeSelectedPython",
                 "key": "shift+enter",
-                "when": "editorTextFocus && editorLangId == python && !findInputFocussed && !replaceInputFocussed && !suggestWidgetVisible && editorHasSelection"
-            },
-            {
-                "command": "pylot.executeSelectedPython",
-                "key": "shift+enter",
-                "when": "editorTextFocus && editorLangId == python && !findInputFocussed && !replaceInputFocussed && !suggestWidgetVisible && !editorHasSelection"
+                "when": "editorTextFocus && editorLangId == python && !findInputFocussed && !replaceInputFocussed && !suggestWidgetVisible"
             },
             {
                 "command": "pylot.evaluateExpression",
@@ -87,12 +82,7 @@
             {
                 "command": "pylot.executeSelectedPythonNoMove",
                 "key": "shift+ctrl+enter",
-                "when": "editorTextFocus && editorLangId == python && !findInputFocussed && !replaceInputFocussed && !suggestWidgetVisible && editorHasSelection"
-            },
-            {
-                "command": "pylot.executeSelectedPythonNoMove",
-                "key": "shift+ctrl+enter",
-                "when": "editorTextFocus && editorLangId == python && !findInputFocussed && !replaceInputFocussed && !suggestWidgetVisible && !editorHasSelection"
+                "when": "editorTextFocus && editorLangId == python && !findInputFocussed && !replaceInputFocussed && !suggestWidgetVisible"
             }
         ]
     },
