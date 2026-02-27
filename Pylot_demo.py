@@ -47,5 +47,3 @@ for i in range(n):
     plt.plot(x, y, color=plt.cm.plasma(float(i)/n), alpha=0.9, lw=0.8)
 plt.show()
 
-
-

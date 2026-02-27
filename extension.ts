@@ -10,6 +10,8 @@
  *   <<<PYLOT_SUCCESS>>>            – code block executed successfully
  *   <<<PYLOT_ERROR>>>              – code block raised an exception
  *   <<<PYLOT_TYPE:<typename>>>>    – type of the last evaluated expression
+ *   <<<PYLOT_VALID>>>              – code is a valid expression
+ *   <<<PYLOT_INVALID>>>            – code is not a valid expression
  */
 
 import * as vscode from 'vscode';
@@ -32,10 +34,22 @@ let replReady = false;
 let currentPythonPath: string | undefined = undefined;
 let currentExecutionCallback: ((success: boolean) => void) | null = null;
 let expressionResultCallback: ((result: string) => void) | null = null;
+let validationCallback: ((isValid: boolean) => void) | null = null;
 let outputChannel: vscode.OutputChannel;
 let lastExpressionResult: string = '';
 let lastExpressionType: string = '';
 const DEBUG_MODE = false;
+
+// ── Timeout constants ───────────────────────────────────────────────────────
+
+/** Maximum time (ms) to wait for the REPL to print its READY marker. */
+const REPL_STARTUP_TIMEOUT_MS = 5000;
+
+/** Maximum time (ms) to wait for expression validation via the REPL. */
+const VALIDATION_TIMEOUT_MS = 2000;
+
+/** Interval (s) between Matplotlib GUI event pumps in the REPL loop. */
+const MPL_EVENT_PUMP_INTERVAL_S = 0.05;
 
 // ── Activation ──────────────────────────────────────────────────────────────
 
@@ -128,6 +142,8 @@ READY_MARKER = "<<<PYLOT_READY>>>"
 ERROR_MARKER = "<<<PYLOT_ERROR>>>"
 SUCCESS_MARKER = "<<<PYLOT_SUCCESS>>>"
 TYPE_MARKER = "<<<PYLOT_TYPE:"
+VALID_MARKER = "<<<PYLOT_VALID>>>"
+INVALID_MARKER = "<<<PYLOT_INVALID>>>"
 
 print(READY_MARKER, flush=True)
 
@@ -192,7 +208,7 @@ while True:
     try:
         # Wait briefly for input, pumping GUI events in the meantime
         try:
-            line = input_queue.get(timeout=0.05)
+            line = input_queue.get(timeout=${MPL_EVENT_PUMP_INTERVAL_S})
             if line is None:
                 break
         except queue.Empty:
@@ -201,11 +217,22 @@ while True:
             continue
 
         command = json.loads(line.strip())
+        action = command.get('action', 'execute')
         code = command['code']
-        filename = command['filename']
-        start_line = command['start_line']
 
         adjusted_code = json.loads(code)
+
+        # Validate-only: check if code compiles as an expression
+        if action == 'validate':
+            try:
+                compile(adjusted_code, '<string>', 'eval')
+                print(VALID_MARKER, flush=True)
+            except SyntaxError:
+                print(INVALID_MARKER, flush=True)
+            continue
+
+        filename = command['filename']
+        start_line = command['start_line']
 
         # Auto-patch Matplotlib when the keyword is detected
         if mpl_mode == 'auto' and 'matplotlib' in adjusted_code:
@@ -246,8 +273,14 @@ while True:
      */
     async function startRepl(pythonPath: string): Promise<boolean> {
         return new Promise((resolve) => {
-            try {
+            let resolved = false;
+            const resolveOnce = (value: boolean) => {
+                if (resolved) return;
+                resolved = true;
+                resolve(value);
+            };
 
+            try {
                 const config = vscode.workspace.getConfiguration('pylot');
                 const mplMode = config.get<string>('matplotlibEventHandler', 'auto');
 
@@ -290,10 +323,27 @@ while True:
                     if (stdoutBuffer.includes('<<<PYLOT_READY>>>')) {
                         replReady = true;
                         stdoutBuffer = stdoutBuffer.replace(/<<<PYLOT_READY>>>\r?\n?/g, '');
-                        if (!resolve) return;
-                        const tempResolve = resolve;
-                        resolve = null as any;
-                        tempResolve(true);
+                        resolveOnce(true);
+                    }
+
+                    // Expression validation response
+                    if (stdoutBuffer.includes('<<<PYLOT_VALID>>>')) {
+                        stdoutBuffer = stdoutBuffer.replace(/<<<PYLOT_VALID>>>\r?\n?/g, '');
+                        if (validationCallback) {
+                            validationCallback(true);
+                            validationCallback = null;
+                        }
+                        stdoutBuffer = '';
+                        return;
+                    }
+                    if (stdoutBuffer.includes('<<<PYLOT_INVALID>>>')) {
+                        stdoutBuffer = stdoutBuffer.replace(/<<<PYLOT_INVALID>>>\r?\n?/g, '');
+                        if (validationCallback) {
+                            validationCallback(false);
+                            validationCallback = null;
+                        }
+                        stdoutBuffer = '';
+                        return;
                     }
 
                     // Successful execution
@@ -369,25 +419,17 @@ while True:
                     outputChannel.appendLine(`[ERROR] Failed to start REPL: ${err.message}`);
                     pythonRepl = null;
                     replReady = false;
-                    if (resolve) {
-                        const tempResolve = resolve;
-                        resolve = null as any;
-                        tempResolve(false);
-                    }
+                    resolveOnce(false);
                 });
 
                 // Timeout if REPL doesn't become ready
                 setTimeout(() => {
-                    if (resolve) {
-                        const tempResolve = resolve;
-                        resolve = null as any;
-                        tempResolve(false);
-                    }
-                }, 5000);
+                    resolveOnce(false);
+                }, REPL_STARTUP_TIMEOUT_MS);
 
             } catch (err: any) {
                 outputChannel.appendLine(`[ERROR] Exception starting REPL: ${err.message}`);
-                resolve(false);
+                resolveOnce(false);
             }
         });
     }
@@ -685,51 +727,34 @@ while True:
     // ── Expression evaluation ───────────────────────────────────────────
 
     /**
-     * Spawn a short-lived Python process to check whether `code` can be
-     * compiled as an expression (eval) rather than a statement (exec).
+     * Ask the persistent REPL whether `code` can be compiled as an
+     * expression (eval) rather than a statement (exec). Uses the
+     * `validate` action so no separate Python process is spawned.
      */
-    async function isValidPythonExpression(code: string): Promise<boolean> {
-        const pythonPath = await getPythonPath();
-        if (!pythonPath) { return false; }
-
+    function isValidPythonExpression(code: string): Promise<boolean> {
         return new Promise((resolve) => {
-            try {
-                const checkScript = `import sys; code = sys.stdin.read();
-try:
-    compile(code, '<string>', 'eval')
-    print('VALID')
-except SyntaxError:
-    print('INVALID')`;
-
-                const proc = spawn(pythonPath, ['-c', checkScript], {
-                    stdio: ['pipe', 'pipe', 'pipe']
-                });
-
-                let stdout = '';
-
-                proc.stdout?.on('data', (data) => {
-                    stdout += data.toString();
-                });
-
-                proc.on('close', () => {
-                    resolve(stdout.trim() === 'VALID');
-                });
-
-                proc.on('error', () => {
-                    resolve(false);
-                });
-
-                proc.stdin?.write(code);
-                proc.stdin?.end();
-
-                setTimeout(() => {
-                    proc.kill();
-                    resolve(false);
-                }, 2000);
-
-            } catch {
+            if (!pythonRepl || !replReady) {
                 resolve(false);
+                return;
             }
+
+            validationCallback = (isValid: boolean) => {
+                resolve(isValid);
+            };
+
+            const command = {
+                action: 'validate',
+                code: JSON.stringify(code)
+            };
+            pythonRepl.stdin?.write(JSON.stringify(command) + '\n');
+
+            // Timeout in case the REPL doesn't respond
+            setTimeout(() => {
+                if (validationCallback) {
+                    validationCallback = null;
+                    resolve(false);
+                }
+            }, VALIDATION_TIMEOUT_MS);
         });
     }
 
@@ -847,12 +872,6 @@ except SyntaxError:
             return;
         }
 
-        const isExpression = await isValidPythonExpression(code);
-        if (!isExpression) {
-            vscode.window.showInformationMessage('Selection is not a valid expression (statements cannot be evaluated)');
-            return;
-        }
-
         const pythonPath = await getPythonPath();
         if (!pythonPath) { return; }
 
@@ -867,6 +886,13 @@ except SyntaxError:
                 vscode.window.showErrorMessage('Failed to start Python REPL. See "pylot" in Output.');
                 return;
             }
+        }
+
+        // Validate via the REPL (requires REPL to be running)
+        const isExpression = await isValidPythonExpression(code);
+        if (!isExpression) {
+            vscode.window.showInformationMessage('Selection is not a valid expression (statements cannot be evaluated)');
+            return;
         }
 
         lastExpressionResult = '';
