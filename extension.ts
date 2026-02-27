@@ -697,12 +697,14 @@ while True:
                 editor.setDecorations(executedDecoration, [trimmedRange]);
             } else {
                 editor.setDecorations(errorDecoration, [trimmedRange]);
-                editor.selection = originalSelection;
-                editor.revealRange(originalSelection);
+                const emptySelection = new vscode.Selection(originalSelection.active, originalSelection.active);
+                editor.selection = emptySelection;
+                editor.revealRange(emptySelection);
             }
         } else {
-            editor.selection = originalSelection;
-            editor.revealRange(originalSelection);
+            const emptySelection = new vscode.Selection(originalSelection.active, originalSelection.active);
+            editor.selection = emptySelection;
+            editor.revealRange(emptySelection);
         }
     }
 
