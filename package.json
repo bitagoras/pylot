@@ -2,7 +2,7 @@
     "name": "pylot",
     "displayName": "Pylot - Python code runner",
     "description": "Executes lines of Python code with visualized smart selection.",
-    "version": "0.5.0",
+    "version": "0.5.1",
     "publisher": "bitagoras",
     "repository": "https://github.com/bitagoras/pylot",
     "engines": {
@@ -22,7 +22,11 @@
             "properties": {
                 "pylot.matplotlibEventHandler": {
                     "type": "string",
-                    "enum": ["always", "auto", "never"],
+                    "enum": [
+                        "always",
+                        "auto",
+                        "never"
+                    ],
                     "enumDescriptions": [
                         "Always load Matplotlib event handler.",
                         "Auto-detect 'matplotlib' keyword to load event handler before execution.",

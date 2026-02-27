@@ -8,7 +8,7 @@ A VSCode extension that runs lines of Python code with visualized smart selectio
 - **Clean Output Window** - Output is displayed in a dedicated panel, without repeating the code lines.
 - **Visual Line Markers** - See smart selection and execution status with gutter icons:
   - 🟧 Orange (animated): Currently running
-  - 🟩 Greem: Successfully executed
+  - 🟩 Green: Successfully executed
   - 🟥 Red: Error occurred
 - **Restart REPL** - Clear and restart the Python REPL session
 - **Clear Output** - Clear the output channel

@@ -18,7 +18,7 @@ let expressionResultCallback: ((result: string) => void) | null = null;
 let outputChannel: vscode.OutputChannel;
 let lastExpressionResult: string = '';
 let lastExpressionType: string = '';
-    const DEBUG_MODE = false; // Toggle this to enable debug mode
+const DEBUG_MODE = false; // Toggle this to enable debug mode
 
 export function activate(context: vscode.ExtensionContext) {
     vscode.commands.executeCommand('setContext', 'pylotMarkerActive', true);
@@ -226,7 +226,7 @@ while True:
         print(ERROR_MARKER, flush=True)
 `;
 
-// Function to start the persistent REPL
+    // Function to start the persistent REPL
     async function startRepl(pythonPath: string): Promise<boolean> {
         return new Promise((resolve) => {
             try {
@@ -477,76 +477,9 @@ while True:
         vscode.window.showInformationMessage('All Pylot color marks removed.');
     });
 
-async function executeSelectedPython(editor: vscode.TextEditor, moveCursor: boolean): Promise<void> {
-        const selection = editor.selection;
-
+    async function executeSelectedPython(editor: vscode.TextEditor, moveCursor: boolean): Promise<void> {
         const pythonPath = await getPythonPath();
         if (!pythonPath) { return; }
-
-        // 1. Pre-trim the selection to exclude leading/trailing empty lines and comments
-        let initialStartLine = selection.start.line;
-        let initialEndLine = selection.end.line;
-
-        while (initialStartLine <= initialEndLine) {
-            const text = editor.document.lineAt(initialStartLine).text.trim();
-            if (text.length > 0 && !text.startsWith('#')) break;
-            initialStartLine++;
-        }
-
-        while (initialEndLine >= initialStartLine) {
-            const text = editor.document.lineAt(initialEndLine).text.trim();
-            if (text.length > 0 && !text.startsWith('#')) break;
-            initialEndLine--;
-        }
-
-        // --- NEW LOGIC FOR EMPTY/COMMENT SELECTIONS ---
-        if (initialStartLine > initialEndLine) {
-            if (moveCursor) {
-                // Find the next valid line starting from the line AFTER the current selection's end
-                let nextLine = selection.end.line + 1;
-                while (nextLine < editor.document.lineCount) {
-                    const lineText = editor.document.lineAt(nextLine).text;
-                    if (lineText.trim().length > 0 && !lineText.trim().startsWith('#')) {
-                        break;
-                    }
-                    nextLine++;
-                }
-
-                if (nextLine < editor.document.lineCount) {
-                    const line = editor.document.lineAt(nextLine);
-                    const newPos = new vscode.Position(nextLine, line.firstNonWhitespaceCharacterIndex);
-                    editor.selection = new vscode.Selection(newPos, newPos);
-                    editor.revealRange(new vscode.Range(newPos, newPos));
-                } else {
-                    // At end of file - check if cursor is already at an empty line after last executable content
-                    const currentLineText = editor.document.lineAt(selection.start.line).text;
-                    if (currentLineText.trim().length === 0) {
-                        // Already at an empty line, stay there
-                        return;
-                    }
-                    // Move to line after selection, inserting newline if needed
-                    const targetLine = selection.end.line + 1;
-                    if (targetLine >= editor.document.lineCount) {
-                        // Insert a newline at the end of the document
-                        const lastLine = editor.document.lineAt(editor.document.lineCount - 1);
-                        const edit = new vscode.WorkspaceEdit();
-                        edit.insert(editor.document.uri, lastLine.range.end, '\n');
-                        await vscode.workspace.applyEdit(edit);
-                    }
-                    // Move the cursor to the new empty line
-                    const newPos = new vscode.Position(targetLine, 0);
-                    editor.selection = new vscode.Selection(newPos, newPos);
-                    editor.revealRange(new vscode.Range(newPos, newPos));
-                }
-            }
-            return; // Exit early: No execution, no markers changed
-        }
-        // --- END OF NEW LOGIC ---
-
-        const preTrimmedSelection = new vscode.Selection(
-            new vscode.Position(initialStartLine, 0),
-            new vscode.Position(initialEndLine, editor.document.lineAt(initialEndLine).range.end.character)
-        );
 
         // Start REPL if not running...
         if (!pythonRepl || !replReady || currentPythonPath !== pythonPath || DEBUG_MODE) {
@@ -563,171 +496,135 @@ async function executeSelectedPython(editor: vscode.TextEditor, moveCursor: bool
             outputChannel.show(true);
         }
 
-        let executionSelection = preTrimmedSelection;
-
-        try {
-            // 2. Fetch selection ranges for expansion
-
-            // ADJUSTMENT 1: Shift query positions completely out of comments into code.
-            let queryStart = preTrimmedSelection.start;
-            let queryEnd = preTrimmedSelection.end;
-
-            const startLine = editor.document.lineAt(queryStart.line);
-            const startCommentIdx = startLine.text.indexOf('#');
-            // If at or after a '#', move strictly to the code (first non-whitespace character)
-            if (startCommentIdx !== -1 && queryStart.character >= startCommentIdx) {
-                queryStart = new vscode.Position(queryStart.line, startLine.firstNonWhitespaceCharacterIndex);
-            }
-
-            const endLine = editor.document.lineAt(queryEnd.line);
-            const endCommentIdx = endLine.text.indexOf('#');
-            if (endCommentIdx !== -1 && queryEnd.character >= endCommentIdx) {
-                queryEnd = new vscode.Position(queryEnd.line, endLine.firstNonWhitespaceCharacterIndex);
-            }
-
-            // FIX: Changed 'yield' to 'await'
-            const ranges: any = await vscode.commands.executeCommand('vscode.executeSelectionRangeProvider', editor.document.uri, [queryStart, queryEnd]);
-
-            // NEW LOGIC: Abort if the language server returns nothing during startup
-            if (!ranges || ranges.length === 0) {
-                vscode.window.showWarningMessage("Pylot: Language server is still initializing. Please wait a moment.");
-                return;
-            }
-
-            if (ranges && ranges.length > 0) {
-                // ADJUSTMENT 2: Calculate semantic document boundaries (ignoring trailing whitespace)
-                let firstCodeLine = 0;
-                while (firstCodeLine < editor.document.lineCount && editor.document.lineAt(firstCodeLine).text.trim() === '') {
-                    firstCodeLine++;
-                }
-                let lastCodeLine = editor.document.lineCount - 1;
-                while (lastCodeLine >= 0 && editor.document.lineAt(lastCodeLine).text.trim() === '') {
-                    lastCodeLine--;
-                }
-
-                const getTopBlock = (selectionRange: any) => {
-                    let current = selectionRange;
-                    const chain = [];
-                    while (current) {
-                        chain.push(current);
-                        current = current.parent;
-                    }
-
-                    // ROBUST CHECK: If the narrowest range (chain[0]) is ALREADY the whole document,
-                    // the LS failed to find a localized AST node (e.g., stuck in whitespace/comment).
-                    const narrowestRange = chain[0].range;
-                    if (narrowestRange.start.line <= firstCodeLine && narrowestRange.end.line >= lastCodeLine) {
-                        return null; // Return null to signal invalid expansion
-                    }
-
-                    // Walk down from the largest blocks
-                    for (let i = chain.length - 1; i >= 0; i--) {
-                        const r = chain[i].range;
-
-                        const isWholeDoc = (r.start.line <= firstCodeLine && r.end.line >= lastCodeLine);
-                        if (!isWholeDoc) {
-                            return r;
-                        }
-                    }
-                    return narrowestRange; // Fallback to the narrowest statement
-                };
-
-                const startBlockRange = getTopBlock(ranges[0]);
-                const endBlockRange = ranges.length > 1 ? getTopBlock(ranges[1]) : startBlockRange;
-
-                // Fall back to the original selection if the LS returned an unhelpful scope
-                if (!startBlockRange || !endBlockRange) {
-                    executionSelection = preTrimmedSelection;
-                } else {
-                    let finalStart = startBlockRange.start;
-                    let finalEnd = endBlockRange.end;
-
-                    if (preTrimmedSelection.start.isBefore(finalStart))
-                        finalStart = preTrimmedSelection.start;
-                    if (preTrimmedSelection.end.isAfter(finalEnd))
-                        finalEnd = preTrimmedSelection.end;
-
-                    // Safety check limit (still good to keep as a failsafe)
-                    const originalLineCount = preTrimmedSelection.end.line - preTrimmedSelection.start.line + 1;
-                    const expandedLineCount = finalEnd.line - finalStart.line + 1;
-                    if (expandedLineCount > 100 && originalLineCount < 10) {
-                        executionSelection = preTrimmedSelection;
-                    } else {
-                        executionSelection = new vscode.Selection(finalStart, finalEnd);
-                    }
-                }
-            }
-        } catch (e) {
-            console.error("Error expanding selection:", e);
-            // NEW LOGIC: Abort execution completely if the language server throws an error (e.g., not ready)
-            vscode.window.showWarningMessage("Pylot: Language server is starting up. Please wait.");
+        // Verify real Language Server is active by requesting Document Symbols
+        const symbols: any = await vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', editor.document.uri);
+        if (!symbols || symbols.length === 0) {
+            // Return silently; do not execute an unverified single line/word fallback
             return;
         }
 
-        let startLine = executionSelection.start.line;
-        let endLine = executionSelection.end.line;
-        let code = editor.document.getText(executionSelection);
+        let initialStartLine = editor.selection.start.line;
+        let initialEndLine = editor.selection.end.line;
 
+        // If the selection is not empty but ends exactly at the beginning of a line,
+        // we should not include that line in our evaluation execution scope.
+        if (!editor.selection.isEmpty && editor.selection.end.character === 0 && initialEndLine > initialStartLine) {
+            initialEndLine--;
+        }
+
+        // Trim leading non-executable lines (whitespace and comments)
+        while (initialStartLine <= initialEndLine) {
+            const text = editor.document.lineAt(initialStartLine).text.trim();
+            if (text.length > 0 && !text.startsWith('#')) break;
+            initialStartLine++;
+        }
+
+        // Trim trailing non-executable lines (whitespace and comments)
+        while (initialEndLine >= initialStartLine) {
+            const text = editor.document.lineAt(initialEndLine).text.trim();
+            if (text.length > 0 && !text.startsWith('#')) break;
+            initialEndLine--;
+        }
+
+        // If the selection contains no executable lines
+        if (initialStartLine > initialEndLine) {
+            if (moveCursor) {
+                // Find the next valid executable line starting AFTER the original selection
+                let nextLine = editor.selection.end.line + 1;
+                while (nextLine < editor.document.lineCount) {
+                    const lineText = editor.document.lineAt(nextLine).text;
+                    if (lineText.trim().length > 0 && !lineText.trim().startsWith('#')) {
+                        break;
+                    }
+                    nextLine++;
+                }
+
+                if (nextLine < editor.document.lineCount) {
+                    const line = editor.document.lineAt(nextLine);
+                    const newPos = new vscode.Position(nextLine, line.firstNonWhitespaceCharacterIndex);
+                    editor.selection = new vscode.Selection(newPos, newPos);
+                    editor.revealRange(new vscode.Range(newPos, newPos));
+                }
+                // Do nothing if at EOF and no executable line is found.
+            }
+            return; // Exit early: No execution, no markers changed
+        }
+
+        let executionSelection: vscode.Selection;
+
+        try {
+            // Query LS using the trimmed bounds
+            const queryStart = new vscode.Position(initialStartLine, editor.document.lineAt(initialStartLine).firstNonWhitespaceCharacterIndex);
+            const queryEnd = new vscode.Position(initialEndLine, editor.document.lineAt(initialEndLine).firstNonWhitespaceCharacterIndex);
+
+            const ranges: any = await vscode.commands.executeCommand('vscode.executeSelectionRangeProvider', editor.document.uri, [queryStart, queryEnd]);
+
+            if (!ranges || ranges.length === 0) {
+                return;
+            }
+
+            // Function to traverse AST chain to top-level statement/block
+            const getTopBlock = (selectionRange: any) => {
+                let current = selectionRange;
+                let blockRange = current.range;
+
+                while (current.parent) {
+                    const parentRange = current.parent.range;
+                    // Stop before selecting the entire file
+                    if (parentRange.start.line === 0 && parentRange.end.line >= editor.document.lineCount - 1) {
+                        break;
+                    }
+                    blockRange = parentRange;
+                    current = current.parent;
+                }
+                return blockRange;
+            };
+
+            const startBlockRange = getTopBlock(ranges[0]);
+            const endBlockRange = ranges.length > 1 ? getTopBlock(ranges[1]) : startBlockRange;
+
+            executionSelection = new vscode.Selection(startBlockRange.start, endBlockRange.end);
+        } catch (e) {
+            return; // Fail cleanly
+        }
+
+        if (executionSelection.isEmpty) {
+            return;
+        }
+
+        const code = editor.document.getText(executionSelection);
         const command = {
             code: JSON.stringify(code),
             filename: editor.document.fileName,
-            start_line: startLine + 1
+            start_line: executionSelection.start.line + 1
         };
 
-        // Tighten range for visual decorations
-        while (startLine <= endLine) {
-            const text = editor.document.lineAt(startLine).text.trim();
-            if (text.length > 0 && !text.startsWith('#')) break;
-            startLine++;
-        }
-        while (endLine >= startLine) {
-            const text = editor.document.lineAt(endLine).text.trim();
-            if (text.length > 0 && !text.startsWith('#')) break;
-            endLine--;
-        }
-
         const trimmedRange = new vscode.Range(
-            new vscode.Position(startLine, 0),
-            new vscode.Position(endLine, editor.document.lineAt(endLine).text.length)
+            executionSelection.start,
+            executionSelection.end
         );
 
         const originalSelection = editor.selection;
         const canExecute = pythonRepl !== null && replReady && currentExecutionCallback === null;
 
         if (canExecute && moveCursor) {
-            let nextLine = executionSelection.end.line + 1;
-            while (nextLine < editor.document.lineCount) {
-                const lineText = editor.document.lineAt(nextLine).text;
-                if (lineText.trim().length > 0 && !lineText.trim().startsWith('#')) break;
-                nextLine++;
+            // Move the cursor exactly to the next executable line past the executed block
+            let targetLine = executionSelection.end.line + 1;
+            while (targetLine < editor.document.lineCount) {
+                const lineText = editor.document.lineAt(targetLine).text;
+                if (lineText.trim().length > 0 && !lineText.trim().startsWith('#')) {
+                    break;
+                }
+                targetLine++;
             }
 
-            if (nextLine < editor.document.lineCount) {
-                const line = editor.document.lineAt(nextLine);
-                const newPos = new vscode.Position(nextLine, line.firstNonWhitespaceCharacterIndex);
+            if (targetLine < editor.document.lineCount) {
+                const line = editor.document.lineAt(targetLine);
+                const newPos = new vscode.Position(targetLine, line.firstNonWhitespaceCharacterIndex);
                 editor.selection = new vscode.Selection(newPos, newPos);
                 editor.revealRange(new vscode.Range(newPos, newPos));
-            } else {
-                // At end of file - check if cursor is already at an empty line after last executable content
-                const currentLineText = editor.document.lineAt(selection.start.line).text;
-                if (currentLineText.trim().length === 0) {
-                    // Already at an empty line, stay there - don't move cursor
-                } else {
-                    // Move to line after the block, inserting newline if needed
-                    const targetLine = executionSelection.end.line + 1;
-                    if (targetLine >= editor.document.lineCount) {
-                        // Insert a newline at the end of the document
-                        const lastLine = editor.document.lineAt(editor.document.lineCount - 1);
-                        const edit = new vscode.WorkspaceEdit();
-                        edit.insert(editor.document.uri, lastLine.range.end, '\n');
-                        await vscode.workspace.applyEdit(edit);
-                    }
-                    // Move the cursor to the new empty line
-                    const newPos = new vscode.Position(targetLine, 0);
-                    editor.selection = new vscode.Selection(newPos, newPos);
-                    editor.revealRange(new vscode.Range(newPos, newPos));
-                }
             }
+            // Do nothing if at EOF and no executable line is found.
         }
 
         const result = await executeInRepl(command, editor, trimmedRange, canExecute);
@@ -955,15 +852,15 @@ except SyntaxError:
                         </div>
                         ${lastExpressionType ? `<div class="label type-box">Type: ${lastExpressionType}</div>` : ''}
                         ${lastExpressionResult && lastExpressionResult.trim() ?
-                            `<div class="label">Result:</div>
+                    `<div class="label">Result:</div>
                             <div class="result-box">
                                 ${lastExpressionResult.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
                             </div>` :
-                            `<div class="label">Result:</div>
+                    `<div class="label">Result:</div>
                             <div class="result-box no-output">
                                 Expression evaluated successfully (no output)
                             </div>`
-                        }
+                }
                         <button onclick="vscode.postMessage({ command: 'close' })">Close</button>
                     </div>
                     <script>
