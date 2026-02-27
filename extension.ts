@@ -526,66 +526,128 @@ while True:
             initialEndLine--;
         }
 
+        let executionSelection: vscode.Selection | null = null;
+
         // If the selection contains no executable lines
         if (initialStartLine > initialEndLine) {
-            if (moveCursor) {
-                // Find the next valid executable line starting AFTER the original selection
-                let nextLine = editor.selection.end.line + 1;
-                while (nextLine < editor.document.lineCount) {
-                    const lineText = editor.document.lineAt(nextLine).text;
-                    if (lineText.trim().length > 0 && !lineText.trim().startsWith('#')) {
-                        break;
-                    }
-                    nextLine++;
-                }
+            let isInnerBlock = false;
 
-                if (nextLine < editor.document.lineCount) {
-                    const line = editor.document.lineAt(nextLine);
-                    const newPos = new vscode.Position(nextLine, line.firstNonWhitespaceCharacterIndex);
-                    editor.selection = new vscode.Selection(newPos, newPos);
-                    editor.revealRange(new vscode.Range(newPos, newPos));
+            // Only attempt to grab an inner block if it's a pure cursor selection
+            if (editor.selection.isEmpty) {
+                try {
+                    const ranges: any = await vscode.commands.executeCommand('vscode.executeSelectionRangeProvider', editor.document.uri, [editor.selection.active]);
+
+                    if (ranges && ranges.length > 0) {
+                        let currentRange = ranges[0];
+                        let blockRange = currentRange.range;
+
+                        let firstCodeLine = 0;
+                        while (firstCodeLine < editor.document.lineCount && editor.document.lineAt(firstCodeLine).text.trim() === '') {
+                            firstCodeLine++;
+                        }
+                        let lastCodeLine = editor.document.lineCount - 1;
+                        while (lastCodeLine >= 0 && editor.document.lineAt(lastCodeLine).text.trim() === '') {
+                            lastCodeLine--;
+                        }
+
+                        // Traverse AST to find a valid encapsulating structural block
+                        while (currentRange.parent) {
+                            const parentRange = currentRange.parent.range;
+                            // Stop before selecting the entire file
+                            if (parentRange.start.line <= firstCodeLine && parentRange.end.line >= lastCodeLine) {
+                                break;
+                            }
+                            blockRange = parentRange;
+                            currentRange = currentRange.parent;
+                        }
+
+                        // If the located block actually spans multiple lines, it's an inner block
+                        if (blockRange.start.line < blockRange.end.line) {
+                            // But reject it if it envelops the whole script (i.e. it's the global file scope, not a functional block)
+                            if (blockRange.start.line <= firstCodeLine && blockRange.end.line >= lastCodeLine) {
+                                isInnerBlock = false;
+                            } else {
+                                executionSelection = new vscode.Selection(blockRange.start, blockRange.end);
+                                isInnerBlock = true;
+                            }
+                        }
+                    }
+                } catch (e) {
+                    // Ignore and fallback to skipping
                 }
-                // Do nothing if at EOF and no executable line is found.
             }
-            return; // Exit early: No execution, no markers changed
+
+            // If we didn't find an enclosing structural block, fallback to skipping the blank space
+            if (!isInnerBlock) {
+                if (moveCursor) {
+                    // Find the next valid executable line starting AFTER the original selection
+                    let nextLine = editor.selection.end.line + 1;
+                    while (nextLine < editor.document.lineCount) {
+                        const lineText = editor.document.lineAt(nextLine).text;
+                        if (lineText.trim().length > 0 && !lineText.trim().startsWith('#')) {
+                            break;
+                        }
+                        nextLine++;
+                    }
+
+                    if (nextLine < editor.document.lineCount) {
+                        const line = editor.document.lineAt(nextLine);
+                        const newPos = new vscode.Position(nextLine, line.firstNonWhitespaceCharacterIndex);
+                        editor.selection = new vscode.Selection(newPos, newPos);
+                        editor.revealRange(new vscode.Range(newPos, newPos));
+                    }
+                    // Do nothing if at EOF and no executable line is found.
+                }
+                return; // Exit early: No execution, no markers changed
+            }
         }
 
-        let executionSelection: vscode.Selection;
+        // Standard LS expansion for blocks containing executable lines
+        if (!executionSelection) {
+            try {
+                // Query LS using the trimmed bounds
+                const queryStart = new vscode.Position(initialStartLine, editor.document.lineAt(initialStartLine).firstNonWhitespaceCharacterIndex);
+                const queryEnd = new vscode.Position(initialEndLine, editor.document.lineAt(initialEndLine).firstNonWhitespaceCharacterIndex);
 
-        try {
-            // Query LS using the trimmed bounds
-            const queryStart = new vscode.Position(initialStartLine, editor.document.lineAt(initialStartLine).firstNonWhitespaceCharacterIndex);
-            const queryEnd = new vscode.Position(initialEndLine, editor.document.lineAt(initialEndLine).firstNonWhitespaceCharacterIndex);
+                const ranges: any = await vscode.commands.executeCommand('vscode.executeSelectionRangeProvider', editor.document.uri, [queryStart, queryEnd]);
 
-            const ranges: any = await vscode.commands.executeCommand('vscode.executeSelectionRangeProvider', editor.document.uri, [queryStart, queryEnd]);
-
-            if (!ranges || ranges.length === 0) {
-                return;
-            }
-
-            // Function to traverse AST chain to top-level statement/block
-            const getTopBlock = (selectionRange: any) => {
-                let current = selectionRange;
-                let blockRange = current.range;
-
-                while (current.parent) {
-                    const parentRange = current.parent.range;
-                    // Stop before selecting the entire file
-                    if (parentRange.start.line === 0 && parentRange.end.line >= editor.document.lineCount - 1) {
-                        break;
-                    }
-                    blockRange = parentRange;
-                    current = current.parent;
+                if (!ranges || ranges.length === 0) {
+                    return;
                 }
-                return blockRange;
-            };
 
-            const startBlockRange = getTopBlock(ranges[0]);
-            const endBlockRange = ranges.length > 1 ? getTopBlock(ranges[1]) : startBlockRange;
+                // Function to traverse AST chain to top-level statement/block
+                const getTopBlock = (selectionRange: any) => {
+                    let current = selectionRange;
+                    let blockRange = current.range;
 
-            executionSelection = new vscode.Selection(startBlockRange.start, endBlockRange.end);
-        } catch (e) {
-            return; // Fail cleanly
+                    let firstCodeLine = 0;
+                    while (firstCodeLine < editor.document.lineCount && editor.document.lineAt(firstCodeLine).text.trim() === '') {
+                        firstCodeLine++;
+                    }
+                    let lastCodeLine = editor.document.lineCount - 1;
+                    while (lastCodeLine >= 0 && editor.document.lineAt(lastCodeLine).text.trim() === '') {
+                        lastCodeLine--;
+                    }
+
+                    while (current.parent) {
+                        const parentRange = current.parent.range;
+                        // Stop before selecting the entire file
+                        if (parentRange.start.line <= firstCodeLine && parentRange.end.line >= lastCodeLine) {
+                            break;
+                        }
+                        blockRange = parentRange;
+                        current = current.parent;
+                    }
+                    return blockRange;
+                };
+
+                const startBlockRange = getTopBlock(ranges[0]);
+                const endBlockRange = ranges.length > 1 ? getTopBlock(ranges[1]) : startBlockRange;
+
+                executionSelection = new vscode.Selection(startBlockRange.start, endBlockRange.end);
+            } catch (e) {
+                return; // Fail cleanly
+            }
         }
 
         if (executionSelection.isEmpty) {
