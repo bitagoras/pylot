@@ -1,6 +1,6 @@
 # Code to demonstrate the features of Pylot
 
-# <Shift> + <Return> executes the smallest possible piece of code
+# <Shift> + <Enter> executes the smallest possible piece of code
 # block that includes the line at the cursor.
 
 print("hello world!")
@@ -13,7 +13,7 @@ multiline = """Multi-line commands without
 indent can be executed with the cursor
 anywhere in the block"""
 
-# An animated dark line indicates that Python is busy.
+# An animated line indicates that Python is busy.
 import time
 for i in 5,4,3,2,1:
     print("Wait", '* '*i)
