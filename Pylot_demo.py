@@ -2,7 +2,6 @@
 
 # <Shift> + <Enter> executes the smallest possible piece of code
 # block that includes the line at the cursor.
-
 print("hello world!")
 
 # The value of a single expression line will be printed
@@ -23,11 +22,12 @@ if True:
     print('We divide 5 by zero:')
     print('The result is:', 5 / 0)   # --> runtime error
 
-# Multiple interactive plots can be plotted at the same time
-
+# Mouse hovering over the variable shows its value
 import numpy
-import matplotlib.pyplot as plt
+matrix = numpy.random.randint(10, size=(4,5))
 
+# Multiple interactive plots can be plotted at the same time
+import matplotlib.pyplot as plt
 fig = plt.figure()
 x = numpy.linspace(0,10,500)
 for i in 1,2,3:
@@ -46,4 +46,3 @@ for i in range(n):
     y = (1 - 0.9*t/n) * (numpy.sin(3.008*2*numpy.pi*t) + numpy.sin(1.5*numpy.pi*(t+r1)))
     plt.plot(x, y, color=plt.cm.plasma(float(i)/n), alpha=0.9, lw=0.8)
 plt.show()
-

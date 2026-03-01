@@ -2,7 +2,7 @@
     "name": "pylot",
     "displayName": "Pylot - Python code runner",
     "description": "Executes lines of Python code with visualized smart selection.",
-    "version": "0.5.2",
+    "version": "0.6.0",
     "publisher": "bitagoras",
     "repository": "https://github.com/bitagoras/pylot",
     "engines": {
@@ -76,8 +76,8 @@
             },
             {
                 "command": "pylot.evaluateExpression",
-                "key": "ctrl+alt+space",
-                "when": "editorTextFocus && editorLangId == python && editorHasSelection"
+                "key": "ctrl+shift+space",
+                "when": "editorTextFocus && editorLangId == python"
             },
             {
                 "command": "pylot.executeSelectedPythonNoMove",

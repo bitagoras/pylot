@@ -10,6 +10,8 @@
  *   <<<PYLOT_SUCCESS>>>            – code block executed successfully
  *   <<<PYLOT_ERROR>>>              – code block raised an exception
  *   <<<PYLOT_TYPE:<typename>>>>    – type of the last evaluated expression
+ *   <<<PYLOT_SHAPE:<shape>>>>      – shape of a numpy array result
+ *   <<<PYLOT_LEN:<length>>>>       – length of a sized object
  *   <<<PYLOT_VALID>>>              – code is a valid expression
  *   <<<PYLOT_INVALID>>>            – code is not a valid expression
  */
@@ -38,7 +40,10 @@ let validationCallback: ((isValid: boolean) => void) | null = null;
 let outputChannel: vscode.OutputChannel;
 let lastExpressionResult: string = '';
 let lastExpressionType: string = '';
+let lastExpressionShape: string = '';
+let lastExpressionLen: string = '';
 const DEBUG_MODE = false;
+let silentEvaluation = false;
 
 // ── Timeout constants ───────────────────────────────────────────────────────
 
@@ -142,6 +147,8 @@ READY_MARKER = "<<<PYLOT_READY>>>"
 ERROR_MARKER = "<<<PYLOT_ERROR>>>"
 SUCCESS_MARKER = "<<<PYLOT_SUCCESS>>>"
 TYPE_MARKER = "<<<PYLOT_TYPE:"
+SHAPE_MARKER = "<<<PYLOT_SHAPE:"
+LEN_MARKER = "<<<PYLOT_LEN:"
 VALID_MARKER = "<<<PYLOT_VALID>>>"
 INVALID_MARKER = "<<<PYLOT_INVALID>>>"
 
@@ -248,21 +255,54 @@ while True:
 
         try:
             if is_expression:
-                result = eval(adjusted_code, persistent_globals)
-                if result is not None:
-                    print(repr(result), flush=True)
+                if action == 'evaluate_silent':
+                    # Capture side-effect output (e.g. print()) separately from the return value
+                    import io as _io
+                    _old_stdout = sys.stdout
+                    sys.stdout = _captured = _io.StringIO()
+                    try:
+                        result = eval(adjusted_code, persistent_globals)
+                    finally:
+                        sys.stdout = _old_stdout
+                    # Forward any side-effect output via stderr (not stdout, to keep result buffer clean)
+                    _side_output = _captured.getvalue()
+                    if _side_output:
+                        sys.stderr.write(_side_output)
+                    # Always report value and type, even for None
+                    print(str(result), flush=True)
                     print(TYPE_MARKER + type(result).__name__ + ">>>", flush=True)
+                    if hasattr(result, 'shape') and isinstance(result.shape, tuple):
+                        print(SHAPE_MARKER + str(result.shape) + ">>>", flush=True)
+                    if hasattr(result, '__len__'):
+                        try:
+                            print(LEN_MARKER + str(len(result)) + ">>>", flush=True)
+                        except Exception:
+                            pass
+                else:
+                    result = eval(adjusted_code, persistent_globals)
+                    if result is not None:
+                        print(str(result), flush=True)
+                        print(TYPE_MARKER + type(result).__name__ + ">>>", flush=True)
+                        if hasattr(result, 'shape') and isinstance(result.shape, tuple):
+                            print(SHAPE_MARKER + str(result.shape) + ">>>", flush=True)
+                        if hasattr(result, '__len__'):
+                            try:
+                                print(LEN_MARKER + str(len(result)) + ">>>", flush=True)
+                            except Exception:
+                                pass
             else:
                 compiled = compile(adjusted_code, filename, 'exec')
                 exec(compiled, persistent_globals)
 
             print(SUCCESS_MARKER, flush=True)
         except Exception:
-            traceback.print_exc(file=sys.stderr)
+            if action != 'evaluate_silent':
+                traceback.print_exc(file=sys.stderr)
             print(ERROR_MARKER, flush=True)
 
     except Exception:
-        traceback.print_exc(file=sys.stderr)
+        if action != 'evaluate_silent':
+            traceback.print_exc(file=sys.stderr)
         print(ERROR_MARKER, flush=True)
 `;
 
@@ -355,20 +395,37 @@ while True:
                             expressionType = typeMatchResult[1];
                         }
 
+                        // Extract numpy shape if present
+                        let expressionShape = '';
+                        const shapeMatchResult = stdoutBuffer.match(/<<<PYLOT_SHAPE:([^>]+)>>>/);
+                        if (shapeMatchResult) {
+                            expressionShape = shapeMatchResult[1];
+                        }
+
+                        // Extract len if present
+                        let expressionLen = '';
+                        const lenMatchResult = stdoutBuffer.match(/<<<PYLOT_LEN:([^>]+)>>>/);
+                        if (lenMatchResult) {
+                            expressionLen = lenMatchResult[1];
+                        }
+
                         // Strip protocol markers, preserving user output
                         let cleanedBuffer = stdoutBuffer;
                         cleanedBuffer = cleanedBuffer.replace(/<<<PYLOT_TYPE:[^>]+>>>[\r\n]*/g, '');
+                        cleanedBuffer = cleanedBuffer.replace(/<<<PYLOT_SHAPE:[^>]+>>>[\r\n]*/g, '');
+                        cleanedBuffer = cleanedBuffer.replace(/<<<PYLOT_LEN:[^>]+>>>[\r\n]*/g, '');
                         cleanedBuffer = cleanedBuffer.replace(/<<<PYLOT_SUCCESS>>>[\r\n]*/g, '');
 
                         const normalOutput = cleanedBuffer;
-                        const popupOutput = cleanedBuffer.replace(/[\r\n]+/g, ' ').trim();
 
                         lastExpressionType = expressionType;
+                        lastExpressionShape = expressionShape;
+                        lastExpressionLen = expressionLen;
 
                         if (expressionResultCallback) {
-                            expressionResultCallback(popupOutput);
+                            expressionResultCallback(normalOutput.trim());
                             expressionResultCallback = null;
-                        } else if (normalOutput) {
+                        } else if (normalOutput && !silentEvaluation) {
                             outputChannel.append(normalOutput);
                         }
 
@@ -387,7 +444,7 @@ while True:
                         if (errorResult && expressionResultCallback) {
                             expressionResultCallback(errorResult);
                             expressionResultCallback = null;
-                        } else if (stdoutBuffer) {
+                        } else if (stdoutBuffer && !silentEvaluation) {
                             outputChannel.append(stdoutBuffer);
                         }
 
@@ -398,15 +455,17 @@ while True:
                         stdoutBuffer = '';
                     }
 
-                    // Forward any remaining buffered output
-                    if (stdoutBuffer) {
+                    // Forward any remaining buffered output (only if not waiting for an expression result)
+                    if (stdoutBuffer && !silentEvaluation && !expressionResultCallback) {
                         outputChannel.append(stdoutBuffer);
                         stdoutBuffer = '';
                     }
                 });
 
                 pythonRepl.stderr?.on('data', (data) => {
-                    outputChannel.append(data.toString());
+                    if (!silentEvaluation) {
+                        outputChannel.append(data.toString());
+                    }
                 });
 
                 pythonRepl.on('close', (code) => {
@@ -758,62 +817,6 @@ while True:
         });
     }
 
-    // ── Shared webview CSS ──────────────────────────────────────────────
-
-    /** Base CSS used by both the success and error expression popups. */
-    const webviewBaseCss = `
-        body {
-            font-family: 'Consolas', 'Courier New', monospace;
-            padding: 20px;
-            background-color: #1e1e1e;
-            color: #d4d4d4;
-        }
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
-        }
-        .expression-box {
-            background-color: #2d2d2d;
-            padding: 10px;
-            border-radius: 4px;
-            overflow-x: auto;
-            max-height: 60px;
-            overflow-y: auto;
-        }
-        .result-box {
-            background-color: #2d2d2d;
-            padding: 15px;
-            border-radius: 4px;
-            max-height: 200px;
-            overflow-y: auto;
-        }
-        button {
-            margin-top: 20px;
-            padding: 8px 16px;
-            background-color: #0e639c;
-            color: white;
-            border: none;
-            border-radius: 2px;
-            cursor: pointer;
-        }
-        button:hover {
-            background-color: #1177bb;
-        }`;
-
-    /** Webview close-button script shared by both popup types. */
-    const webviewCloseScript = `
-        <script>
-            const vscode = acquireVsCodeApi();
-            document.querySelector('button').addEventListener('click', () => {
-                vscode.postMessage({ command: 'close' });
-            });
-        </script>`;
-
-    /** Escape HTML special characters for safe embedding in webview. */
-    function escapeHtml(text: string): string {
-        return text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    }
-
     // ── Command registrations ───────────────────────────────────────────
 
     const restartReplCommand = vscode.commands.registerCommand('pylot.restartRepl', async () => {
@@ -860,13 +863,18 @@ while True:
         const editor = vscode.window.activeTextEditor;
         if (!editor) { return; }
 
-        const selection = editor.selection;
+        let selection = editor.selection;
+        const hadSelection = !selection.isEmpty;
+        let code: string;
         if (selection.isEmpty) {
-            vscode.window.showInformationMessage('No expression selected');
-            return;
+            // No selection: evaluate the word at cursor
+            const wordRange = editor.document.getWordRangeAtPosition(selection.active);
+            if (!wordRange) { return; }
+            code = editor.document.getText(wordRange).trim();
+            selection = new vscode.Selection(wordRange.start, wordRange.end);
+        } else {
+            code = editor.document.getText(selection).trim();
         }
-
-        const code = editor.document.getText(selection).trim();
         if (!code) {
             vscode.window.showInformationMessage('No expression selected');
             return;
@@ -891,14 +899,16 @@ while True:
         // Validate via the REPL (requires REPL to be running)
         const isExpression = await isValidPythonExpression(code);
         if (!isExpression) {
-            vscode.window.showInformationMessage('Selection is not a valid expression (statements cannot be evaluated)');
             return;
         }
 
         lastExpressionResult = '';
         lastExpressionType = '';
+        lastExpressionShape = '';
+        lastExpressionLen = '';
 
         const command = {
+            action: 'evaluate_silent',
             code: JSON.stringify(code),
             filename: editor.document.fileName,
             start_line: selection.start.line + 1
@@ -921,89 +931,175 @@ while True:
             pythonRepl.stdin?.write(JSON.stringify(command) + '\n');
         });
 
-        // ── Show result / error in a webview popup ──────────────────
+        // ── Trigger Hover Tooltip ───────────────────────────────────────────
 
-        const escapedCode = escapeHtml(code);
+        const activeEditor = vscode.window.activeTextEditor;
+        if (!activeEditor) return;
 
         if (result.success) {
-            const panel = vscode.window.createWebviewPanel(
-                'pylotExpressionResult',
-                'Expression Result',
-                vscode.ViewColumn.One,
-                { enableScripts: true, retainContextWhenHidden: true }
-            );
-
-            const resultHtml = lastExpressionResult && lastExpressionResult.trim()
-                ? `<div class="label">Result:</div>
-                   <div class="result-box" style="color: #4ec9b0;">${escapeHtml(lastExpressionResult)}</div>`
-                : `<div class="label">Result:</div>
-                   <div class="result-box" style="color: #808080; font-style: italic;">Expression evaluated successfully (no output)</div>`;
-
-            panel.webview.html = `
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <style>
-                        ${webviewBaseCss}
-                        h2 { color: #569cd6; border-bottom: 1px solid #3c3c3c; padding-bottom: 10px; }
-                        .label { font-weight: bold; margin-bottom: 5px; margin-top: 15px; }
-                        .type-box { color: #9cdcfe; }
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
-                        <h2>Expression Result</h2>
-                        <div class="label">Expression:</div>
-                        <div class="expression-box">${escapedCode}</div>
-                        ${lastExpressionType ? `<div class="label type-box">Type: ${lastExpressionType}</div>` : ''}
-                        ${resultHtml}
-                        <button onclick="vscode.postMessage({ command: 'close' })">Close</button>
-                    </div>
-                    ${webviewCloseScript}
-                </body>
-                </html>`;
-
-            panel.webview.onDidReceiveMessage((message) => {
-                if (message.command === 'close') { panel.dispose(); }
-            });
+            forceHoverResult = {
+                expression: code,
+                type: lastExpressionType,
+                shape: lastExpressionShape,
+                len: lastExpressionLen,
+                result: lastExpressionResult,
+                range: new vscode.Range(selection.start, selection.end)
+            };
         } else {
-            const panel = vscode.window.createWebviewPanel(
-                'pylotExpressionError',
-                'Expression Error',
-                vscode.ViewColumn.One,
-                { enableScripts: true, retainContextWhenHidden: true }
-            );
+            forceHoverResult = {
+                expression: code,
+                type: '',
+                shape: '',
+                len: '',
+                result: '',
+                range: new vscode.Range(selection.start, selection.end)
+            };
+        }
 
-            panel.webview.html = `
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <style>
-                        ${webviewBaseCss}
-                        h2 { color: #f44747; border-bottom: 1px solid #3c3c3c; padding-bottom: 10px; }
-                        .error { background-color: #2d2d2d; padding: 15px; border-radius: 4px; color: #f44747; }
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
-                        <h2>Expression Evaluation Failed</h2>
-                        <div class="expression-box" style="margin-bottom: 20px;">
-                            <strong>Expression:</strong><br>
-                            ${escapedCode}
-                        </div>
-                        <div class="error">Check the "pylot" output channel for details.</div>
-                        <button onclick="vscode.postMessage({ command: 'close' })">Close</button>
-                    </div>
-                    ${webviewCloseScript}
-                </body>
-                </html>`;
+        // Restore the original selection so it doesn't collapse
+        if (hadSelection) {
+            activeEditor.selection = selection;
+        }
 
-            panel.webview.onDidReceiveMessage((message) => {
-                if (message.command === 'close') { panel.dispose(); }
+        // Trigger the native hover command. The HoverProvider will intercept this
+        // and use the `forceHoverResult` data.
+        await vscode.commands.executeCommand('editor.action.showHover');
+    });
+
+    let forceHoverResult: { expression: string, type: string, shape: string, len: string, result: string, range: vscode.Range } | null = null;
+
+    /** Build a Markdown tooltip from evaluation results. */
+    function buildTooltipMarkdown(type: string, shape: string, len: string, result: string): vscode.MarkdownString {
+        const markdown = new vscode.MarkdownString();
+        if (!type && !result) {
+            markdown.appendMarkdown(`*Expression cannot be evaluated*`);
+            return markdown;
+        }
+        if (type) {
+            let typeLine = `*\`type\`*: ${type}`;
+            if (len) {
+                typeLine += `, *\`len\`*: ${len}`;
+            }
+            if (shape) {
+                // Format shape from "(10, 20)" to "10 x 20"
+                const formattedShape = shape.replace(/[()]/g, '').replace(/,\s*$/, '').replace(/,\s*/g, ' \u00d7 ').trim();
+                typeLine += `, *\`shape\`*: ${formattedShape}`;
+            }
+            markdown.appendMarkdown(typeLine);
+        }
+        if (result) {
+            const lines = result.split(/\r?\n/);
+            let displayResult = result;
+            let truncated = false;
+            if (lines.length > 50) {
+                displayResult = lines.slice(0, 50).join('\n');
+                truncated = true;
+            }
+            markdown.appendCodeblock(displayResult, 'text');
+            if (truncated) {
+                markdown.appendMarkdown('*... (truncated)*');
+            }
+        } else {
+            markdown.appendMarkdown(`\n\n*Evaluated successfully (no output)*`);
+        }
+        return markdown;
+    }
+
+    const hoverProvider = vscode.languages.registerHoverProvider('python', {
+        async provideHover(document, position, token) {
+            // ── Handle forced hover from "Evaluate Expression" command ──
+            if (forceHoverResult) {
+                const markdown = buildTooltipMarkdown(forceHoverResult.type, forceHoverResult.shape, forceHoverResult.len, forceHoverResult.result);
+
+                // Consume the forced result so it doesn't persistently hijack normal hovers
+                forceHoverResult = null;
+                return new vscode.Hover(markdown);
+            }
+
+            // ── Normal Hover Logic ──────────────────────────────────────────
+            // Only evaluate if REPL is ready and not busy
+            if (!pythonRepl || !replReady || currentExecutionCallback !== null || validationCallback !== null) {
+                return null;
+            }
+
+            const range = document.getWordRangeAtPosition(position);
+            if (!range) { return null; }
+
+            const word = document.getText(range);
+            const lineText = document.lineAt(position.line).text;
+            const textAfterWord = lineText.substring(range.end.character).trimLeft();
+
+            // When there is a function call at the cursor, do not evaluate
+            if (textAfterWord.startsWith('(')) {
+                return null;
+            }
+
+            // Check if there is a selection covering the hover position
+            let expressionToEvaluate = word;
+            const editor = vscode.window.activeTextEditor;
+            if (editor && editor.document === document && !editor.selection.isEmpty && editor.selection.contains(position)) {
+                // If the selection exactly matches the word under cursor, treat as a single variable
+                const selectionText = document.getText(editor.selection).trim();
+                if (selectionText !== word) {
+                    // Multi-token selection: do nothing automatically.
+                    // We rely on the keyboard shortcut (Evaluate Expression) to trigger the hover.
+                    return null;
+                }
+            }
+
+            const isExpression = await isValidPythonExpression(expressionToEvaluate);
+            if (!isExpression || token.isCancellationRequested) {
+                return null;
+            }
+
+            // Double check state after await
+            if (!pythonRepl || !replReady || currentExecutionCallback !== null) {
+                return null;
+            }
+
+            lastExpressionResult = '';
+            lastExpressionType = '';
+            lastExpressionShape = '';
+            lastExpressionLen = '';
+
+            const command = {
+                action: 'evaluate_silent',
+                code: JSON.stringify(expressionToEvaluate),
+                filename: document.fileName,
+                start_line: position.line + 1
+            };
+
+            silentEvaluation = true;
+            const evalResult = await new Promise<{ success: boolean; executed: boolean }>((resolve) => {
+                expressionResultCallback = (resultText: string) => {
+                    lastExpressionResult = resultText;
+                };
+
+                currentExecutionCallback = (execSuccess: boolean) => {
+                    silentEvaluation = false;
+                    resolve({ success: execSuccess, executed: true });
+                };
+
+                pythonRepl?.stdin?.write(JSON.stringify(command) + '\n');
             });
+
+            if (token.isCancellationRequested) {
+                return null;
+            }
+
+            if (!evalResult.success) {
+                return null;
+            }
+
+            if (lastExpressionResult !== '' || lastExpressionType !== '') {
+                return new vscode.Hover(buildTooltipMarkdown(lastExpressionType, lastExpressionShape, lastExpressionLen, lastExpressionResult));
+            }
+
+            return null;
         }
     });
 
+    context.subscriptions.push(hoverProvider);
     context.subscriptions.push(executeCommand);
     context.subscriptions.push(executeNoMoveCommand);
     context.subscriptions.push(restartReplCommand);
