@@ -1,5 +1,3 @@
-# Code to demonstrate the features of Pylot
-
 # <Shift> + <Enter> executes the smallest possible piece of code
 # block that includes the line at the cursor.
 print("hello world!")
@@ -37,7 +35,6 @@ for i in 1,2,3:
 plt.show()
 
 # The next figure can be shown while the first is visible
-
 fig = plt.figure()
 n, (r0, r1) = 100, numpy.random.rand(2)
 for i in range(n):
