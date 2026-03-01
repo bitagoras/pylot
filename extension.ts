@@ -183,6 +183,7 @@ export function activate(context: vscode.ExtensionContext) {
 import sys, json, traceback, os
 import threading
 import queue
+import builtins
 
 io_lock = threading.Lock()
 real_stdout = sys.stdout
@@ -209,6 +210,17 @@ send_msg('ready')
 
 persistent_globals = {'__name__': '__main__', '__doc__': None}
 input_queue = queue.Queue()
+input_reply_queue = queue.Queue()
+
+def custom_input(prompt=""):
+    send_msg('input_request', prompt=str(prompt))
+    reply = input_reply_queue.get()
+    if reply is None:
+        raise EOFError("EOF when reading a line")
+    return reply
+
+builtins.input = custom_input
+
 mpl_mode = os.environ.get('PYLOT_MPL_MODE', 'auto')
 
 def force_patch_matplotlib():
@@ -258,7 +270,10 @@ def read_stdin():
                 command = json.loads(line.strip())
                 if isinstance(command, dict):
                     action = command.get('action')
-                    if action == 'validate_async':
+                    if action == 'input_reply':
+                        input_reply_queue.put(command.get('value'))
+                        continue
+                    elif action == 'validate_async':
                         try:
                             adjusted_code = json.loads(command.get('code', '""'))
                             compile(adjusted_code, '<string>', 'eval')
@@ -448,6 +463,21 @@ while True:
                                     case 'ready':
                                         replReady = true;
                                         resolveOnce(true);
+                                        break;
+
+                                    case 'input_request':
+                                        vscode.window.showInputBox({
+                                            prompt: msg.prompt || '',
+                                            ignoreFocusOut: true
+                                        }).then(value => {
+                                            const replyCommand = {
+                                                action: 'input_reply',
+                                                value: value !== undefined ? value : null
+                                            };
+                                            if (pythonRepl && pythonRepl.stdin) {
+                                                pythonRepl.stdin.write(JSON.stringify(replyCommand) + '\n');
+                                            }
+                                        });
                                         break;
 
                                     case 'validate':
