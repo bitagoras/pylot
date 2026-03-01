@@ -42,8 +42,10 @@ let lastExpressionResult: string = '';
 let lastExpressionType: string = '';
 let lastExpressionShape: string = '';
 let lastExpressionLen: string = '';
+let asyncExpressionResultCallback: ((success: boolean, resultText: string, type: string, shape: string, len: string) => void) | null = null;
 const DEBUG_MODE = false;
 let silentEvaluation = false;
+let runningAnimTimer: ReturnType<typeof setInterval> | null = null;
 
 // ── Timeout constants ───────────────────────────────────────────────────────
 
@@ -63,45 +65,85 @@ export function activate(context: vscode.ExtensionContext) {
 
     outputChannel = vscode.window.createOutputChannel("pylot");
 
-    // ── Gutter decoration SVGs ──────────────────────────────────────────
+    // ── Line decorations (left-border style) ─────────────────────────────
+    //
+    // Uses coloured left borders instead of gutter icons so they don't
+    // conflict with breakpoints.  The running state is animated via a
+    // timer that cycles through pre-built opacity frames.
 
-    const runningSvg = `data:image/svg+xml;utf8,
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 10" preserveAspectRatio="none">
-            <rect x="2" y="0" width="0.75" height="10" fill="rgb(255, 165, 0)">
-                <animate attributeName="fill-opacity"
-                         values="0.5;1;0.5"
-                         dur="2s"
-                         repeatCount="indefinite"
-                         calcMode="spline"
-                         keyTimes="0;0.5;1"
-                         keySplines="0.42 0 0.58 1;0.42 0 0.58 1" />
-            </rect>
-        </svg>`;
+    const RUNNING_FRAMES = 20;
+    const RUNNING_INTERVAL_MS = 100;
+    const runningFrames: vscode.TextEditorDecorationType[] = [];
 
-    const executedSvg = `data:image/svg+xml;utf8,
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 10" preserveAspectRatio="none">
-            <rect x="2" y="0" width="0.75" height="10" fill="rgb(0, 255, 0)" fill-opacity="0.8" />
-        </svg>`;
+    for (let i = 0; i < RUNNING_FRAMES; i++) {
+        const opacity = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin((i / RUNNING_FRAMES) * 2 * Math.PI));
+        runningFrames.push(vscode.window.createTextEditorDecorationType({
+            isWholeLine: true,
+            borderWidth: '0 0 0 4px',
+            borderStyle: 'ridge',
+            borderColor: `rgba(255, 165, 0, ${opacity.toFixed(2)})`,
+            overviewRulerColor: 'rgba(255, 165, 0, 0.8)',
+            overviewRulerLane: vscode.OverviewRulerLane.Left,
+        }));
+    }
 
-    const errorSvg = `data:image/svg+xml;utf8,
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 10" preserveAspectRatio="none">
-            <rect x="2" y="0" width="0.75" height="10" fill="rgb(255, 0, 0)" fill-opacity="0.8" />
-        </svg>`;
+    let runningAnimEditor: vscode.TextEditor | null = null;
+    let runningAnimRanges: vscode.Range[] = [];
+    let runningAnimFrame = 0;
 
-    const runningDecoration = vscode.window.createTextEditorDecorationType({
-        gutterIconPath: vscode.Uri.parse(runningSvg),
-        gutterIconSize: 'contain',
-        isWholeLine: true
-    });
+    function startRunningAnimation(editor: vscode.TextEditor, ranges: vscode.Range[]) {
+        stopRunningAnimation();
+        runningAnimEditor = editor;
+        runningAnimRanges = ranges;
+        runningAnimFrame = 0;
+
+        // Show the first frame immediately
+        editor.setDecorations(runningFrames[0], ranges);
+
+        runningAnimTimer = setInterval(() => {
+            if (!runningAnimEditor) { return; }
+            // Hold a reference to the previous frame
+            const previousFrame = runningAnimFrame;
+
+            // Advance to the new frame and show it first
+            runningAnimFrame = (runningAnimFrame + 1) % RUNNING_FRAMES;
+            runningAnimEditor.setDecorations(runningFrames[runningAnimFrame], runningAnimRanges);
+
+            // Now safely clear the previous frame after the new one is already active
+            runningAnimEditor.setDecorations(runningFrames[previousFrame], []);
+        }, RUNNING_INTERVAL_MS);
+    }
+
+    function stopRunningAnimation() {
+        if (runningAnimTimer) {
+            clearInterval(runningAnimTimer);
+            runningAnimTimer = null;
+        }
+        if (runningAnimEditor) {
+            for (let i = 0; i < RUNNING_FRAMES; i++) {
+                runningAnimEditor.setDecorations(runningFrames[i], []);
+            }
+        }
+        runningAnimEditor = null;
+        runningAnimRanges = [];
+    }
+
     const executedDecoration = vscode.window.createTextEditorDecorationType({
-        gutterIconPath: vscode.Uri.parse(executedSvg),
-        gutterIconSize: 'contain',
-        isWholeLine: true
+        isWholeLine: true,
+        borderWidth: '0 0 0 4px',
+        borderStyle: 'ridge',
+        borderColor: 'rgba(0, 255, 0, 0.6)',
+        overviewRulerColor: 'rgba(0, 255, 0, 0.6)',
+        overviewRulerLane: vscode.OverviewRulerLane.Left,
     });
+
     const errorDecoration = vscode.window.createTextEditorDecorationType({
-        gutterIconPath: vscode.Uri.parse(errorSvg),
-        gutterIconSize: 'contain',
-        isWholeLine: true
+        isWholeLine: true,
+        borderWidth: '0 0 0 4px',
+        borderStyle: 'ridge',
+        borderColor: 'rgba(255, 0, 0, 0.6)',
+        overviewRulerColor: 'rgba(255, 0, 0, 0.6)',
+        overviewRulerLane: vscode.OverviewRulerLane.Left,
     });
 
     // ── Python interpreter discovery ────────────────────────────────────
@@ -151,6 +193,12 @@ SHAPE_MARKER = "<<<PYLOT_SHAPE:"
 LEN_MARKER = "<<<PYLOT_LEN:"
 VALID_MARKER = "<<<PYLOT_VALID>>>"
 INVALID_MARKER = "<<<PYLOT_INVALID>>>"
+
+ASYNC_SUCCESS_MARKER = "<<<PYLOT_ASYNC_SUCCESS>>>"
+ASYNC_ERROR_MARKER = "<<<PYLOT_ASYNC_ERROR>>>"
+ASYNC_TYPE_MARKER = "<<<PYLOT_ASYNC_TYPE:"
+ASYNC_SHAPE_MARKER = "<<<PYLOT_ASYNC_SHAPE:"
+ASYNC_LEN_MARKER = "<<<PYLOT_ASYNC_LEN:"
 
 print(READY_MARKER, flush=True)
 
@@ -204,6 +252,39 @@ def read_stdin():
             if not line:
                 input_queue.put(None)
                 break
+
+            try:
+                command = json.loads(line.strip())
+                if isinstance(command, dict):
+                    action = command.get('action')
+                    if action == 'validate_async':
+                        try:
+                            adjusted_code = json.loads(command.get('code', '""'))
+                            compile(adjusted_code, '<string>', 'eval')
+                            print(VALID_MARKER, flush=True)
+                        except SyntaxError:
+                            print(INVALID_MARKER, flush=True)
+                        continue
+                    elif action == 'evaluate_async':
+                        try:
+                            adjusted_code = json.loads(command.get('code', '""'))
+                            result = eval(adjusted_code, persistent_globals)
+                            print(str(result), flush=True)
+                            print(ASYNC_TYPE_MARKER + type(result).__name__ + ">>>", flush=True)
+                            if hasattr(result, 'shape') and isinstance(result.shape, tuple):
+                                print(ASYNC_SHAPE_MARKER + str(result.shape) + ">>>", flush=True)
+                            if hasattr(result, '__len__'):
+                                try:
+                                    print(ASYNC_LEN_MARKER + str(len(result)) + ">>>", flush=True)
+                                except Exception:
+                                    pass
+                            print(ASYNC_SUCCESS_MARKER, flush=True)
+                        except Exception:
+                            print(ASYNC_ERROR_MARKER, flush=True)
+                        continue
+            except Exception:
+                pass
+
             input_queue.put(line)
         except Exception:
             break
@@ -386,6 +467,45 @@ while True:
                         return;
                     }
 
+                    // Successful ASYNC execution
+                    if (stdoutBuffer.includes('<<<PYLOT_ASYNC_SUCCESS>>>')) {
+                        let expressionType = '';
+                        const typeMatchResult = stdoutBuffer.match(/<<<PYLOT_ASYNC_TYPE:([a-zA-Z_0-9]+)>>>/);
+                        if (typeMatchResult) { expressionType = typeMatchResult[1]; }
+
+                        let expressionShape = '';
+                        const shapeMatchResult = stdoutBuffer.match(/<<<PYLOT_ASYNC_SHAPE:([^>]+)>>>/);
+                        if (shapeMatchResult) { expressionShape = shapeMatchResult[1]; }
+
+                        let expressionLen = '';
+                        const lenMatchResult = stdoutBuffer.match(/<<<PYLOT_ASYNC_LEN:([^>]+)>>>/);
+                        if (lenMatchResult) { expressionLen = lenMatchResult[1]; }
+
+                        let cleanedBuffer = stdoutBuffer;
+                        cleanedBuffer = cleanedBuffer.replace(/<<<PYLOT_ASYNC_TYPE:[^>]+>>>[\r\n]*/g, '');
+                        cleanedBuffer = cleanedBuffer.replace(/<<<PYLOT_ASYNC_SHAPE:[^>]+>>>[\r\n]*/g, '');
+                        cleanedBuffer = cleanedBuffer.replace(/<<<PYLOT_ASYNC_LEN:[^>]+>>>[\r\n]*/g, '');
+                        cleanedBuffer = cleanedBuffer.replace(/<<<PYLOT_ASYNC_SUCCESS>>>[\r\n]*/g, '');
+
+                        if (asyncExpressionResultCallback) {
+                            asyncExpressionResultCallback(true, cleanedBuffer.trim(), expressionType, expressionShape, expressionLen);
+                            asyncExpressionResultCallback = null;
+                        }
+                        stdoutBuffer = '';
+                        return;
+                    }
+
+                    // Failed ASYNC execution
+                    if (stdoutBuffer.includes('<<<PYLOT_ASYNC_ERROR>>>')) {
+                        stdoutBuffer = stdoutBuffer.replace(/<<<PYLOT_ASYNC_ERROR>>>\r?\n?/g, '');
+                        if (asyncExpressionResultCallback) {
+                            asyncExpressionResultCallback(false, stdoutBuffer.trim(), '', '', '');
+                            asyncExpressionResultCallback = null;
+                        }
+                        stdoutBuffer = '';
+                        return;
+                    }
+
                     // Successful execution
                     if (stdoutBuffer.includes('<<<PYLOT_SUCCESS>>>')) {
                         // Extract expression type if present
@@ -502,13 +622,16 @@ while True:
         }
     }
 
-    // ── Gutter decoration helpers ───────────────────────────────────────
+    // ── Line decoration helpers ─────────────────────────────────────────
 
-    /** Clear all Pylot gutter decorations from every visible Python editor. */
+    /** Clear all Pylot line decorations from every visible Python editor. */
     function removeAllColorMarks() {
+        stopRunningAnimation();
         for (const editor of vscode.window.visibleTextEditors) {
             if (editor.document.languageId === 'python') {
-                editor.setDecorations(runningDecoration, []);
+                for (let i = 0; i < RUNNING_FRAMES; i++) {
+                    editor.setDecorations(runningFrames[i], []);
+                }
                 editor.setDecorations(executedDecoration, []);
                 editor.setDecorations(errorDecoration, []);
             }
@@ -528,9 +651,9 @@ while True:
                 return;
             }
 
-            editor.setDecorations(runningDecoration, [trimmedRange]);
             editor.setDecorations(executedDecoration, []);
             editor.setDecorations(errorDecoration, []);
+            startRunningAnimation(editor, [trimmedRange]);
 
             currentExecutionCallback = (execSuccess: boolean) => {
                 resolve({ success: execSuccess, executed: true });
@@ -763,10 +886,10 @@ while True:
 
         const result = await executeInRepl(command, editor, trimmedRange, canExecute);
 
-        // ── Update gutter decorations ───────────────────────────────────
+        // ── Update line decorations ──────────────────────────────────────
 
         if (result.executed) {
-            editor.setDecorations(runningDecoration, []);
+            stopRunningAnimation();
             if (result.success) {
                 editor.setDecorations(executedDecoration, [trimmedRange]);
             } else {
@@ -802,7 +925,7 @@ while True:
             };
 
             const command = {
-                action: 'validate',
+                action: 'validate_async',
                 code: JSON.stringify(code)
             };
             pythonRepl.stdin?.write(JSON.stringify(command) + '\n');
@@ -908,7 +1031,7 @@ while True:
         lastExpressionLen = '';
 
         const command = {
-            action: 'evaluate_silent',
+            action: 'evaluate_async',
             code: JSON.stringify(code),
             filename: editor.document.fileName,
             start_line: selection.start.line + 1
@@ -920,12 +1043,12 @@ while True:
                 return;
             }
 
-            expressionResultCallback = (resultText: string) => {
+            asyncExpressionResultCallback = (success: boolean, resultText: string, type: string, shape: string, len: string) => {
                 lastExpressionResult = resultText;
-            };
-
-            currentExecutionCallback = (execSuccess: boolean) => {
-                resolve({ success: execSuccess, executed: true });
+                lastExpressionType = type;
+                lastExpressionShape = shape;
+                lastExpressionLen = len;
+                resolve({ success: success, executed: true });
             };
 
             pythonRepl.stdin?.write(JSON.stringify(command) + '\n');
@@ -1017,8 +1140,8 @@ while True:
             }
 
             // ── Normal Hover Logic ──────────────────────────────────────────
-            // Only evaluate if REPL is ready and not busy
-            if (!pythonRepl || !replReady || currentExecutionCallback !== null || validationCallback !== null) {
+            // Evaluate even if REPL is busy, since we use evaluate_async now
+            if (!pythonRepl || !replReady) {
                 return null;
             }
 
@@ -1053,7 +1176,7 @@ while True:
             }
 
             // Double check state after await
-            if (!pythonRepl || !replReady || currentExecutionCallback !== null) {
+            if (!pythonRepl || !replReady) {
                 return null;
             }
 
@@ -1063,21 +1186,19 @@ while True:
             lastExpressionLen = '';
 
             const command = {
-                action: 'evaluate_silent',
+                action: 'evaluate_async',
                 code: JSON.stringify(expressionToEvaluate),
                 filename: document.fileName,
                 start_line: position.line + 1
             };
 
-            silentEvaluation = true;
             const evalResult = await new Promise<{ success: boolean; executed: boolean }>((resolve) => {
-                expressionResultCallback = (resultText: string) => {
+                asyncExpressionResultCallback = (success: boolean, resultText: string, type: string, shape: string, len: string) => {
                     lastExpressionResult = resultText;
-                };
-
-                currentExecutionCallback = (execSuccess: boolean) => {
-                    silentEvaluation = false;
-                    resolve({ success: execSuccess, executed: true });
+                    lastExpressionType = type;
+                    lastExpressionShape = shape;
+                    lastExpressionLen = len;
+                    resolve({ success: success, executed: true });
                 };
 
                 pythonRepl?.stdin?.write(JSON.stringify(command) + '\n');
@@ -1111,6 +1232,9 @@ while True:
 // ── Deactivation ────────────────────────────────────────────────────────────
 
 export function deactivate() {
+    if (runningAnimTimer) {
+        clearInterval(runningAnimTimer);
+    }
     if (pythonRepl) {
         pythonRepl.kill();
     }
