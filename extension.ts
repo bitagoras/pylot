@@ -3,17 +3,20 @@
  *
  * Runs selected Python code in a persistent background REPL. The editor acts
  * as the input interface while results appear in a dedicated output panel.
- * Execution state (running / success / error) is shown via gutter markers.
+ * Execution state (running / success / error) is shown via line decorations
+ * (left borders).
  *
  * Communication protocol with the REPL wrapper:
- *   <<<PYLOT_READY>>>              – REPL is initialised and ready
- *   <<<PYLOT_SUCCESS>>>            – code block executed successfully
- *   <<<PYLOT_ERROR>>>              – code block raised an exception
- *   <<<PYLOT_TYPE:<typename>>>>    – type of the last evaluated expression
- *   <<<PYLOT_SHAPE:<shape>>>>      – shape of a numpy array result
- *   <<<PYLOT_LEN:<length>>>>       – length of a sized object
- *   <<<PYLOT_VALID>>>              – code is a valid expression
- *   <<<PYLOT_INVALID>>>            – code is not a valid expression
+ *   The wrapper reads JSON commands from stdin and outputs JSON messages
+ *   to stdout, prefixed with the marker <<<PYLOT_JSON>>>.
+ *
+ *   Message types:
+ *     - 'ready': REPL is initialised and ready
+ *     - 'input_request': REPL is asking for user input via input()
+ *     - 'validate': Result of an async validation check
+ *     - 'evaluate_async': Result of an async block evaluation
+ *     - 'execute': Result of a standard code execution
+ *     - 'interrupt': Result of a keyboard interrupt request
  */
 
 import * as vscode from 'vscode';
@@ -35,7 +38,6 @@ let pythonRepl: ChildProcess | null = null;
 let replReady = false;
 let currentPythonPath: string | undefined = undefined;
 let currentExecutionCallback: ((success: boolean) => void) | null = null;
-let expressionResultCallback: ((result: string) => void) | null = null;
 let validationCallback: ((isValid: boolean) => void) | null = null;
 let outputChannel: vscode.OutputChannel;
 let lastExpressionResult: string = '';
@@ -49,7 +51,7 @@ let runningAnimTimer: ReturnType<typeof setInterval> | null = null;
 
 // ── Timeout constants ───────────────────────────────────────────────────────
 
-/** Maximum time (ms) to wait for the REPL to print its READY marker. */
+/** Maximum time (ms) to wait for the REPL to print its ready message. */
 const REPL_STARTUP_TIMEOUT_MS = 5000;
 
 /** Maximum time (ms) to wait for expression validation via the REPL. */
@@ -175,7 +177,7 @@ export function activate(context: vscode.ExtensionContext) {
      * Python bootstrap script injected into the REPL process.
      *
      * It reads JSON commands from stdin, executes them in a persistent
-     * namespace, and communicates results back via stdout markers.
+     * namespace, and communicates results back via stdout JSON messages.
      * A background thread reads stdin so the main loop can also pump
      * Matplotlib GUI events between commands.
      */
@@ -392,7 +394,7 @@ while True:
 
     /**
      * Spawn a new persistent Python REPL process.
-     * Resolves `true` once the REPL prints its READY marker, or `false` on
+     * Resolves `true` once the REPL prints its ready message, or `false` on
      * timeout / error.
      */
     async function startRepl(pythonPath: string): Promise<boolean> {
@@ -587,7 +589,7 @@ while True:
     // ── Code execution ──────────────────────────────────────────────────
 
     /**
-     * Send a code block to the REPL and track its execution via gutter
+     * Send a code block to the REPL and track its execution via line
      * decorations. Resolves with `{ success, executed }`.
      */
     function executeInRepl(command: any, editor: vscode.TextEditor, trimmedRange: vscode.Range, canExecute: boolean): Promise<{ success: boolean; executed: boolean }> {
@@ -682,7 +684,7 @@ while True:
     /**
      * Core command handler. Determines the code block to execute (via
      * smart selection or explicit selection), sends it to the REPL, and
-     * updates gutter decorations and cursor position.
+     * updates line decorations and cursor position.
      *
      * @param moveCursor If true, advance the cursor past the executed block.
      */
@@ -857,7 +859,7 @@ while True:
     /**
      * Ask the persistent REPL whether `code` can be compiled as an
      * expression (eval) rather than a statement (exec). Uses the
-     * `validate` action so no separate Python process is spawned.
+     * `validate_async` action so no separate Python process is spawned.
      */
     function isValidPythonExpression(code: string): Promise<boolean> {
         return new Promise((resolve) => {
