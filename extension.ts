@@ -184,32 +184,34 @@ import sys, json, traceback, os
 import threading
 import queue
 
-# Markers used to communicate execution results back to VS Code
-READY_MARKER = "<<<PYLOT_READY>>>"
-ERROR_MARKER = "<<<PYLOT_ERROR>>>"
-SUCCESS_MARKER = "<<<PYLOT_SUCCESS>>>"
-TYPE_MARKER = "<<<PYLOT_TYPE:"
-SHAPE_MARKER = "<<<PYLOT_SHAPE:"
-LEN_MARKER = "<<<PYLOT_LEN:"
-VALID_MARKER = "<<<PYLOT_VALID>>>"
-INVALID_MARKER = "<<<PYLOT_INVALID>>>"
+io_lock = threading.Lock()
+real_stdout = sys.stdout
 
-ASYNC_SUCCESS_MARKER = "<<<PYLOT_ASYNC_SUCCESS>>>"
-ASYNC_ERROR_MARKER = "<<<PYLOT_ASYNC_ERROR>>>"
-ASYNC_TYPE_MARKER = "<<<PYLOT_ASYNC_TYPE:"
-ASYNC_SHAPE_MARKER = "<<<PYLOT_ASYNC_SHAPE:"
-ASYNC_LEN_MARKER = "<<<PYLOT_ASYNC_LEN:"
+class LockedStdout:
+    def write(self, s):
+        with io_lock:
+            real_stdout.write(s)
+            real_stdout.flush()
+    def flush(self):
+        with io_lock:
+            real_stdout.flush()
 
-print(READY_MARKER, flush=True)
+sys.stdout = LockedStdout()
+sys.stderr = LockedStdout()
 
-# Persistent global namespace shared across all executed code blocks
+def send_msg(msg_type, **kwargs):
+    kwargs['type'] = msg_type
+    with io_lock:
+        real_stdout.write(f"<<<PYLOT_JSON>>>{json.dumps(kwargs)}\\n")
+        real_stdout.flush()
+
+send_msg('ready')
+
 persistent_globals = {'__name__': '__main__', '__doc__': None}
-
 input_queue = queue.Queue()
 mpl_mode = os.environ.get('PYLOT_MPL_MODE', 'auto')
 
 def force_patch_matplotlib():
-    """Enable interactive mode and make plt.show() non-blocking."""
     try:
         import matplotlib.pyplot as plt
         if getattr(plt, '_pylot_patched', False):
@@ -227,7 +229,6 @@ def force_patch_matplotlib():
         pass
 
 def pump_events():
-    """Flush GUI events for all open Matplotlib figures."""
     if 'matplotlib.pyplot' not in sys.modules:
         return
     try:
@@ -261,26 +262,27 @@ def read_stdin():
                         try:
                             adjusted_code = json.loads(command.get('code', '""'))
                             compile(adjusted_code, '<string>', 'eval')
-                            print(VALID_MARKER, flush=True)
+                            send_msg('validate', valid=True)
                         except SyntaxError:
-                            print(INVALID_MARKER, flush=True)
+                            send_msg('validate', valid=False)
                         continue
                     elif action == 'evaluate_async':
                         try:
                             adjusted_code = json.loads(command.get('code', '""'))
                             result = eval(adjusted_code, persistent_globals)
-                            print(str(result), flush=True)
-                            print(ASYNC_TYPE_MARKER + type(result).__name__ + ">>>", flush=True)
-                            if hasattr(result, 'shape') and isinstance(result.shape, tuple):
-                                print(ASYNC_SHAPE_MARKER + str(result.shape) + ">>>", flush=True)
+
+                            datatype = type(result).__name__
+                            shape = str(result.shape) if hasattr(result, 'shape') and isinstance(result.shape, tuple) else None
+                            length = None
                             if hasattr(result, '__len__'):
                                 try:
-                                    print(ASYNC_LEN_MARKER + str(len(result)) + ">>>", flush=True)
+                                    length = str(len(result))
                                 except Exception:
                                     pass
-                            print(ASYNC_SUCCESS_MARKER, flush=True)
+
+                            send_msg('evaluate_async', success=True, result=str(result), datatype=datatype, shape=shape, len=length)
                         except Exception:
-                            print(ASYNC_ERROR_MARKER, flush=True)
+                            send_msg('evaluate_async', success=False)
                         continue
             except Exception:
                 pass
@@ -294,7 +296,6 @@ stdin_thread.start()
 
 while True:
     try:
-        # Wait briefly for input, pumping GUI events in the meantime
         try:
             line = input_queue.get(timeout=${MPL_EVENT_PUMP_INTERVAL_S})
             if line is None:
@@ -310,23 +311,20 @@ while True:
 
         adjusted_code = json.loads(code)
 
-        # Validate-only: check if code compiles as an expression
         if action == 'validate':
             try:
                 compile(adjusted_code, '<string>', 'eval')
-                print(VALID_MARKER, flush=True)
+                send_msg('validate', valid=True)
             except SyntaxError:
-                print(INVALID_MARKER, flush=True)
+                send_msg('validate', valid=False)
             continue
 
         filename = command['filename']
         start_line = command['start_line']
 
-        # Auto-patch Matplotlib when the keyword is detected
         if mpl_mode == 'auto' and 'matplotlib' in adjusted_code:
             force_patch_matplotlib()
 
-        # Determine whether the code is an expression or a statement
         is_expression = False
         try:
             compiled = compile(adjusted_code, filename, 'eval')
@@ -336,55 +334,31 @@ while True:
 
         try:
             if is_expression:
-                if action == 'evaluate_silent':
-                    # Capture side-effect output (e.g. print()) separately from the return value
-                    import io as _io
-                    _old_stdout = sys.stdout
-                    sys.stdout = _captured = _io.StringIO()
-                    try:
-                        result = eval(adjusted_code, persistent_globals)
-                    finally:
-                        sys.stdout = _old_stdout
-                    # Forward any side-effect output via stderr (not stdout, to keep result buffer clean)
-                    _side_output = _captured.getvalue()
-                    if _side_output:
-                        sys.stderr.write(_side_output)
-                    # Always report value and type, even for None
-                    print(str(result), flush=True)
-                    print(TYPE_MARKER + type(result).__name__ + ">>>", flush=True)
-                    if hasattr(result, 'shape') and isinstance(result.shape, tuple):
-                        print(SHAPE_MARKER + str(result.shape) + ">>>", flush=True)
+                result = eval(adjusted_code, persistent_globals)
+                if result is not None:
+                    print(str(result))
+                    datatype = type(result).__name__
+                    shape = str(result.shape) if hasattr(result, 'shape') and isinstance(result.shape, tuple) else None
+                    length = None
                     if hasattr(result, '__len__'):
                         try:
-                            print(LEN_MARKER + str(len(result)) + ">>>", flush=True)
+                            length = str(len(result))
                         except Exception:
                             pass
+                    send_msg('execute', success=True, datatype=datatype, shape=shape, len=length)
                 else:
-                    result = eval(adjusted_code, persistent_globals)
-                    if result is not None:
-                        print(str(result), flush=True)
-                        print(TYPE_MARKER + type(result).__name__ + ">>>", flush=True)
-                        if hasattr(result, 'shape') and isinstance(result.shape, tuple):
-                            print(SHAPE_MARKER + str(result.shape) + ">>>", flush=True)
-                        if hasattr(result, '__len__'):
-                            try:
-                                print(LEN_MARKER + str(len(result)) + ">>>", flush=True)
-                            except Exception:
-                                pass
+                    send_msg('execute', success=True)
             else:
                 compiled = compile(adjusted_code, filename, 'exec')
                 exec(compiled, persistent_globals)
-
-            print(SUCCESS_MARKER, flush=True)
+                send_msg('execute', success=True)
         except Exception:
-            if action != 'evaluate_silent':
-                traceback.print_exc(file=sys.stderr)
-            print(ERROR_MARKER, flush=True)
+            traceback.print_exc(file=sys.stderr)
+            send_msg('execute', success=False)
 
     except Exception:
-        if action != 'evaluate_silent':
-            traceback.print_exc(file=sys.stderr)
-        print(ERROR_MARKER, flush=True)
+        traceback.print_exc(file=sys.stderr)
+        send_msg('execute', success=False)
 `;
 
     /**
@@ -437,148 +411,76 @@ while True:
                 let stdoutBuffer = '';
 
                 pythonRepl.stdout?.on('data', (data) => {
-                    const text = data.toString();
-                    stdoutBuffer += text;
+                    stdoutBuffer += data.toString();
 
-                    // REPL startup complete
-                    if (stdoutBuffer.includes('<<<PYLOT_READY>>>')) {
-                        replReady = true;
-                        stdoutBuffer = stdoutBuffer.replace(/<<<PYLOT_READY>>>\r?\n?/g, '');
-                        resolveOnce(true);
-                    }
+                    let newlineIndex: number;
+                    while ((newlineIndex = stdoutBuffer.indexOf('\n')) !== -1) {
+                        const line = stdoutBuffer.slice(0, newlineIndex + 1);
+                        stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
 
-                    // Expression validation response
-                    if (stdoutBuffer.includes('<<<PYLOT_VALID>>>')) {
-                        stdoutBuffer = stdoutBuffer.replace(/<<<PYLOT_VALID>>>\r?\n?/g, '');
-                        if (validationCallback) {
-                            validationCallback(true);
-                            validationCallback = null;
+                        const markerIndex = line.indexOf('<<<PYLOT_JSON>>>');
+                        if (markerIndex !== -1) {
+                            if (markerIndex > 0) {
+                                const userOutput = line.substring(0, markerIndex);
+                                if (!silentEvaluation) {
+                                    outputChannel.append(userOutput);
+                                }
+                            }
+                            const jsonStr = line.substring(markerIndex + '<<<PYLOT_JSON>>>'.length).trim();
+                            try {
+                                const msg = JSON.parse(jsonStr);
+
+                                switch (msg.type) {
+                                    case 'ready':
+                                        replReady = true;
+                                        resolveOnce(true);
+                                        break;
+
+                                    case 'validate':
+                                        if (validationCallback) {
+                                            validationCallback(msg.valid);
+                                            validationCallback = null;
+                                        }
+                                        break;
+
+                                    case 'evaluate_async':
+                                        if (asyncExpressionResultCallback) {
+                                            asyncExpressionResultCallback(
+                                                msg.success,
+                                                msg.result || '',
+                                                msg.datatype || '',
+                                                msg.shape || '',
+                                                msg.len || ''
+                                            );
+                                            asyncExpressionResultCallback = null;
+                                        }
+                                        break;
+
+                                    case 'execute':
+                                        if (msg.success) {
+                                            lastExpressionType = msg.datatype || '';
+                                            lastExpressionShape = msg.shape || '';
+                                            lastExpressionLen = msg.len || '';
+                                            if (currentExecutionCallback) {
+                                                currentExecutionCallback(true);
+                                                currentExecutionCallback = null;
+                                            }
+                                        } else {
+                                            if (currentExecutionCallback) {
+                                                currentExecutionCallback(false);
+                                                currentExecutionCallback = null;
+                                            }
+                                        }
+                                        break;
+                                }
+                            } catch (e) {
+                                // Fallback for invalid JSON
+                            }
+                        } else {
+                            if (!silentEvaluation) {
+                                outputChannel.append(line);
+                            }
                         }
-                        stdoutBuffer = '';
-                        return;
-                    }
-                    if (stdoutBuffer.includes('<<<PYLOT_INVALID>>>')) {
-                        stdoutBuffer = stdoutBuffer.replace(/<<<PYLOT_INVALID>>>\r?\n?/g, '');
-                        if (validationCallback) {
-                            validationCallback(false);
-                            validationCallback = null;
-                        }
-                        stdoutBuffer = '';
-                        return;
-                    }
-
-                    // Successful ASYNC execution
-                    if (stdoutBuffer.includes('<<<PYLOT_ASYNC_SUCCESS>>>')) {
-                        let expressionType = '';
-                        const typeMatchResult = stdoutBuffer.match(/<<<PYLOT_ASYNC_TYPE:([a-zA-Z_0-9]+)>>>/);
-                        if (typeMatchResult) { expressionType = typeMatchResult[1]; }
-
-                        let expressionShape = '';
-                        const shapeMatchResult = stdoutBuffer.match(/<<<PYLOT_ASYNC_SHAPE:([^>]+)>>>/);
-                        if (shapeMatchResult) { expressionShape = shapeMatchResult[1]; }
-
-                        let expressionLen = '';
-                        const lenMatchResult = stdoutBuffer.match(/<<<PYLOT_ASYNC_LEN:([^>]+)>>>/);
-                        if (lenMatchResult) { expressionLen = lenMatchResult[1]; }
-
-                        let cleanedBuffer = stdoutBuffer;
-                        cleanedBuffer = cleanedBuffer.replace(/<<<PYLOT_ASYNC_TYPE:[^>]+>>>[\r\n]*/g, '');
-                        cleanedBuffer = cleanedBuffer.replace(/<<<PYLOT_ASYNC_SHAPE:[^>]+>>>[\r\n]*/g, '');
-                        cleanedBuffer = cleanedBuffer.replace(/<<<PYLOT_ASYNC_LEN:[^>]+>>>[\r\n]*/g, '');
-                        cleanedBuffer = cleanedBuffer.replace(/<<<PYLOT_ASYNC_SUCCESS>>>[\r\n]*/g, '');
-
-                        if (asyncExpressionResultCallback) {
-                            asyncExpressionResultCallback(true, cleanedBuffer.trim(), expressionType, expressionShape, expressionLen);
-                            asyncExpressionResultCallback = null;
-                        }
-                        stdoutBuffer = '';
-                        return;
-                    }
-
-                    // Failed ASYNC execution
-                    if (stdoutBuffer.includes('<<<PYLOT_ASYNC_ERROR>>>')) {
-                        stdoutBuffer = stdoutBuffer.replace(/<<<PYLOT_ASYNC_ERROR>>>\r?\n?/g, '');
-                        if (asyncExpressionResultCallback) {
-                            asyncExpressionResultCallback(false, stdoutBuffer.trim(), '', '', '');
-                            asyncExpressionResultCallback = null;
-                        }
-                        stdoutBuffer = '';
-                        return;
-                    }
-
-                    // Successful execution
-                    if (stdoutBuffer.includes('<<<PYLOT_SUCCESS>>>')) {
-                        // Extract expression type if present
-                        let expressionType = '';
-                        const typeMatchResult = stdoutBuffer.match(/<<<PYLOT_TYPE:([a-zA-Z_0-9]+)>>>/);
-                        if (typeMatchResult) {
-                            expressionType = typeMatchResult[1];
-                        }
-
-                        // Extract numpy shape if present
-                        let expressionShape = '';
-                        const shapeMatchResult = stdoutBuffer.match(/<<<PYLOT_SHAPE:([^>]+)>>>/);
-                        if (shapeMatchResult) {
-                            expressionShape = shapeMatchResult[1];
-                        }
-
-                        // Extract len if present
-                        let expressionLen = '';
-                        const lenMatchResult = stdoutBuffer.match(/<<<PYLOT_LEN:([^>]+)>>>/);
-                        if (lenMatchResult) {
-                            expressionLen = lenMatchResult[1];
-                        }
-
-                        // Strip protocol markers, preserving user output
-                        let cleanedBuffer = stdoutBuffer;
-                        cleanedBuffer = cleanedBuffer.replace(/<<<PYLOT_TYPE:[^>]+>>>[\r\n]*/g, '');
-                        cleanedBuffer = cleanedBuffer.replace(/<<<PYLOT_SHAPE:[^>]+>>>[\r\n]*/g, '');
-                        cleanedBuffer = cleanedBuffer.replace(/<<<PYLOT_LEN:[^>]+>>>[\r\n]*/g, '');
-                        cleanedBuffer = cleanedBuffer.replace(/<<<PYLOT_SUCCESS>>>[\r\n]*/g, '');
-
-                        const normalOutput = cleanedBuffer;
-
-                        lastExpressionType = expressionType;
-                        lastExpressionShape = expressionShape;
-                        lastExpressionLen = expressionLen;
-
-                        if (expressionResultCallback) {
-                            expressionResultCallback(normalOutput.trim());
-                            expressionResultCallback = null;
-                        } else if (normalOutput && !silentEvaluation) {
-                            outputChannel.append(normalOutput);
-                        }
-
-                        if (currentExecutionCallback) {
-                            currentExecutionCallback(true);
-                            currentExecutionCallback = null;
-                        }
-                        stdoutBuffer = '';
-                    }
-
-                    // Failed execution
-                    if (stdoutBuffer.includes('<<<PYLOT_ERROR>>>')) {
-                        stdoutBuffer = stdoutBuffer.replace(/<<<PYLOT_ERROR>>>\r?\n?/g, '');
-
-                        const errorResult = stdoutBuffer.trim();
-                        if (errorResult && expressionResultCallback) {
-                            expressionResultCallback(errorResult);
-                            expressionResultCallback = null;
-                        } else if (stdoutBuffer && !silentEvaluation) {
-                            outputChannel.append(stdoutBuffer);
-                        }
-
-                        if (currentExecutionCallback) {
-                            currentExecutionCallback(false);
-                            currentExecutionCallback = null;
-                        }
-                        stdoutBuffer = '';
-                    }
-
-                    // Forward any remaining buffered output (only if not waiting for an expression result)
-                    if (stdoutBuffer && !silentEvaluation && !expressionResultCallback) {
-                        outputChannel.append(stdoutBuffer);
-                        stdoutBuffer = '';
                     }
                 });
 
