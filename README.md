@@ -13,6 +13,7 @@ It unifies a Python REPL with the editor in a clean, minimalist way, bringing yo
   - 🟥 Red: error occurred
 - **Variable inspection** – Hover over any variable to see its type and current value in a tooltip, even while other code is running. Additionally, it shows the length of container objects and the shape of NumPy arrays.
 - **Expression evaluation** – Pressing `Ctrl+Shift+Space` evaluates any selected expression or variable at the cursor and shows the result in a tooltip.
+- **Cell execution** – `Shift+Enter` at a cell comment, which starts with #%%, executes the entire cell until the next cell comment or the end of the file.
 - **Execution interruption** – Easily interrupt long-running or stuck code using `Ctrl+Alt+C` without losing your REPL state.
 - **Matplotlib support** – Keeps multiple Matplotlib plot windows open and interactive while you continue working.
 
@@ -59,11 +60,16 @@ Hover over any variable in your code after it has been executed. A tooltip will 
 | Restart Python REPL | Restart the REPL session | – |
 | Clear Python Output | Clear the output channel | `Ctrl+Shift+C` |
 | Remove All Color Marks | Remove all gutter markers | – |
+| Hide Active Line Markers | Hide currently active line markers | – |
 | Evaluate Python Expression | Evaluate expression or variable and show tooltip | `Ctrl+Shift+Space` |
-| Interrupt Execution | Interrupt running code (sends KeyboardInterrupt) | `Shift+Escape` |
+| Interrupt Execution | Interrupt running code (sends KeyboardInterrupt) | `Ctrl+Alt+C` |
 
 ## Extension Settings
 
+* `pylot.executionMarkerStyle` – Configures the visual style of execution state markers.
+  * `gutter` (default) – Use gutter icon markers.
+  * `border` – Use left-border line markers.
+  * `off` – Disable execution state markers.
 * `pylot.matplotlibEventHandler` – Controls when the Matplotlib non-blocking event handler is injected into the REPL.
   * `auto` (default) – Detects the `matplotlib` keyword in the code and loads the event handler before execution.
   * `always` – Loads the event handler on REPL startup.

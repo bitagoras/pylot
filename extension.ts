@@ -48,6 +48,7 @@ let asyncExpressionResultCallback: ((success: boolean, resultText: string, type:
 const DEBUG_MODE = false;
 let silentEvaluation = false;
 let runningAnimTimer: ReturnType<typeof setInterval> | null = null;
+let pendingOutputShow = false;
 
 // ── Timeout constants ───────────────────────────────────────────────────────
 
@@ -73,6 +74,58 @@ export function activate(context: vscode.ExtensionContext) {
     // conflict with breakpoints.  The running state is animated via a
     // timer that cycles through pre-built opacity frames.
 
+    // ── Gutter decoration SVGs ──────────────────────────────────────────
+
+    const runningSvg = `data:image/svg+xml;utf8,
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 10" preserveAspectRatio="none">
+            <rect x="2" y="0" width="0.75" height="10" fill="rgb(255, 165, 0)">
+                <animate attributeName="fill-opacity"
+                         values="0.5;1;0.5"
+                         dur="2s"
+                         repeatCount="indefinite"
+                         calcMode="spline"
+                         keyTimes="0;0.5;1"
+                         keySplines="0.42 0 0.58 1;0.42 0 0.58 1" />
+            </rect>
+        </svg>`;
+
+    const executedSvg = `data:image/svg+xml;utf8,
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 10" preserveAspectRatio="none">
+            <rect x="2" y="0" width="0.75" height="10" fill="rgb(0, 255, 0)" fill-opacity="0.8" />
+        </svg>`;
+
+    const errorSvg = `data:image/svg+xml;utf8,
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 10" preserveAspectRatio="none">
+            <rect x="2" y="0" width="0.75" height="10" fill="rgb(255, 0, 0)" fill-opacity="0.8" />
+        </svg>`;
+
+    const gutterRunningDecoration = vscode.window.createTextEditorDecorationType({
+        gutterIconPath: vscode.Uri.parse(runningSvg),
+        gutterIconSize: 'contain',
+        isWholeLine: true,
+        overviewRulerColor: 'rgba(255, 165, 0, 0.8)',
+        overviewRulerLane: vscode.OverviewRulerLane.Left,
+    });
+    const gutterExecutedDecoration = vscode.window.createTextEditorDecorationType({
+        gutterIconPath: vscode.Uri.parse(executedSvg),
+        gutterIconSize: 'contain',
+        isWholeLine: true,
+        overviewRulerColor: 'rgba(0, 255, 0, 0.6)',
+        overviewRulerLane: vscode.OverviewRulerLane.Left,
+    });
+    const gutterErrorDecoration = vscode.window.createTextEditorDecorationType({
+        gutterIconPath: vscode.Uri.parse(errorSvg),
+        gutterIconSize: 'contain',
+        isWholeLine: true,
+        overviewRulerColor: 'rgba(255, 0, 0, 0.6)',
+        overviewRulerLane: vscode.OverviewRulerLane.Left,
+    });
+
+    /** Helper to get current marker style from settings */
+    function getMarkerStyle() {
+        return vscode.workspace.getConfiguration('pylot').get<string>('executionMarkerStyle', 'gutter');
+    }
+
     const RUNNING_FRAMES = 20;
     const RUNNING_INTERVAL_MS = 100;
     const runningFrames: vscode.TextEditorDecorationType[] = [];
@@ -81,8 +134,8 @@ export function activate(context: vscode.ExtensionContext) {
         const opacity = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin((i / RUNNING_FRAMES) * 2 * Math.PI));
         runningFrames.push(vscode.window.createTextEditorDecorationType({
             isWholeLine: true,
-            borderWidth: '0 0 0 4px',
-            borderStyle: 'ridge',
+            borderWidth: '0 0 0 3px',
+            borderStyle: 'solid',
             borderColor: `rgba(255, 165, 0, ${opacity.toFixed(2)})`,
             overviewRulerColor: 'rgba(255, 165, 0, 0.8)',
             overviewRulerLane: vscode.OverviewRulerLane.Left,
@@ -99,21 +152,28 @@ export function activate(context: vscode.ExtensionContext) {
         runningAnimRanges = ranges;
         runningAnimFrame = 0;
 
-        // Show the first frame immediately
-        editor.setDecorations(runningFrames[0], ranges);
+        const style = getMarkerStyle();
+        if (style === 'gutter') {
+            editor.setDecorations(gutterRunningDecoration, ranges);
+        }
 
-        runningAnimTimer = setInterval(() => {
-            if (!runningAnimEditor) { return; }
-            // Hold a reference to the previous frame
-            const previousFrame = runningAnimFrame;
+        if (style === 'border') {
+            // Show the first frame immediately
+            editor.setDecorations(runningFrames[0], ranges);
 
-            // Advance to the new frame and show it first
-            runningAnimFrame = (runningAnimFrame + 1) % RUNNING_FRAMES;
-            runningAnimEditor.setDecorations(runningFrames[runningAnimFrame], runningAnimRanges);
+            runningAnimTimer = setInterval(() => {
+                if (!runningAnimEditor) { return; }
+                // Hold a reference to the previous frame
+                const previousFrame = runningAnimFrame;
 
-            // Now safely clear the previous frame after the new one is already active
-            runningAnimEditor.setDecorations(runningFrames[previousFrame], []);
-        }, RUNNING_INTERVAL_MS);
+                // Advance to the new frame and show it first
+                runningAnimFrame = (runningAnimFrame + 1) % RUNNING_FRAMES;
+                runningAnimEditor.setDecorations(runningFrames[runningAnimFrame], runningAnimRanges);
+
+                // Now safely clear the previous frame after the new one is already active
+                runningAnimEditor.setDecorations(runningFrames[previousFrame], []);
+            }, RUNNING_INTERVAL_MS);
+        }
     }
 
     function stopRunningAnimation() {
@@ -125,6 +185,7 @@ export function activate(context: vscode.ExtensionContext) {
             for (let i = 0; i < RUNNING_FRAMES; i++) {
                 runningAnimEditor.setDecorations(runningFrames[i], []);
             }
+            runningAnimEditor.setDecorations(gutterRunningDecoration, []);
         }
         runningAnimEditor = null;
         runningAnimRanges = [];
@@ -132,18 +193,18 @@ export function activate(context: vscode.ExtensionContext) {
 
     const executedDecoration = vscode.window.createTextEditorDecorationType({
         isWholeLine: true,
-        borderWidth: '0 0 0 4px',
-        borderStyle: 'ridge',
-        borderColor: 'rgba(0, 255, 0, 0.6)',
+        borderWidth: '0 0 0 3px',
+        borderStyle: 'solid',
+        borderColor: 'rgba(0, 255, 0, 0.75)',
         overviewRulerColor: 'rgba(0, 255, 0, 0.6)',
         overviewRulerLane: vscode.OverviewRulerLane.Left,
     });
 
     const errorDecoration = vscode.window.createTextEditorDecorationType({
         isWholeLine: true,
-        borderWidth: '0 0 0 4px',
-        borderStyle: 'ridge',
-        borderColor: 'rgba(255, 0, 0, 0.6)',
+        borderWidth: '0 0 0 3px',
+        borderStyle: 'solid',
+        borderColor: 'rgba(255, 0, 0, 0.75)',
         overviewRulerColor: 'rgba(255, 0, 0, 0.6)',
         overviewRulerLane: vscode.OverviewRulerLane.Left,
     });
@@ -182,7 +243,7 @@ export function activate(context: vscode.ExtensionContext) {
      * Matplotlib GUI events between commands.
      */
     const replWrapperCode = `
-import sys, json, traceback, os
+import sys, json, traceback, os, re
 import threading
 import queue
 import builtins
@@ -209,6 +270,14 @@ def send_msg(msg_type, **kwargs):
         real_stdout.flush()
 
 send_msg('ready')
+
+def print_exception_with_links(e):
+    exc_type, exc_value, exc_tb = sys.exc_info()
+    if exc_tb and exc_tb.tb_frame.f_code.co_filename == '<string>' and exc_tb.tb_next:
+        exc_tb = exc_tb.tb_next
+
+    lines = traceback.format_exception(exc_type, exc_value, exc_tb)
+    sys.stderr.write("".join(lines))
 
 persistent_globals = {'__name__': '__main__', '__doc__': None}
 input_queue = queue.Queue()
@@ -345,7 +414,7 @@ while True:
             continue
 
         filename = command['filename']
-        start_line = command['start_line']
+        start_line = command.get('start_line', 1)
 
         if mpl_mode == 'auto' and 'matplotlib' in adjusted_code:
             force_patch_matplotlib()
@@ -357,9 +426,12 @@ while True:
         except SyntaxError:
             is_expression = False
 
+        if start_line > 1:
+            adjusted_code = ("\\n" * (start_line - 1)) + adjusted_code
+
         try:
             if is_expression:
-                result = eval(adjusted_code, persistent_globals)
+                result = eval(compiled, persistent_globals)
                 if result is not None:
                     print(str(result))
                     datatype = type(result).__name__
@@ -380,15 +452,15 @@ while True:
         except KeyboardInterrupt:
             print("\\nKeyboardInterrupt", file=sys.stderr)
             send_msg('execute', success=False)
-        except Exception:
-            traceback.print_exc(file=sys.stderr)
+        except Exception as e:
+            print_exception_with_links(e)
             send_msg('execute', success=False)
 
     except KeyboardInterrupt:
         print("\\nKeyboardInterrupt", file=sys.stderr)
         send_msg('execute', success=False)
-    except Exception:
-        traceback.print_exc(file=sys.stderr)
+    except Exception as e:
+        print_exception_with_links(e)
         send_msg('execute', success=False)
 `;
 
@@ -454,6 +526,10 @@ while True:
                             if (markerIndex > 0) {
                                 const userOutput = line.substring(0, markerIndex);
                                 if (!silentEvaluation) {
+                                    if (pendingOutputShow) {
+                                        outputChannel.show(true);
+                                        pendingOutputShow = false;
+                                    }
                                     outputChannel.append(userOutput);
                                 }
                             }
@@ -512,6 +588,7 @@ while True:
                                                 currentExecutionCallback = null;
                                             }
                                         } else {
+                                            outputChannel.show(true);
                                             if (currentExecutionCallback) {
                                                 currentExecutionCallback(false);
                                                 currentExecutionCallback = null;
@@ -524,6 +601,10 @@ while True:
                             }
                         } else {
                             if (!silentEvaluation) {
+                                if (pendingOutputShow) {
+                                    outputChannel.show(true);
+                                    pendingOutputShow = false;
+                                }
                                 outputChannel.append(line);
                             }
                         }
@@ -532,6 +613,10 @@ while True:
 
                 pythonRepl.stderr?.on('data', (data) => {
                     if (!silentEvaluation) {
+                        if (pendingOutputShow) {
+                            outputChannel.show(true);
+                            pendingOutputShow = false;
+                        }
                         outputChannel.append(data.toString());
                     }
                 });
@@ -543,6 +628,7 @@ while True:
                 });
 
                 pythonRepl.on('error', (err) => {
+                    outputChannel.show(true);
                     outputChannel.appendLine(`[ERROR] Failed to start REPL: ${err.message}`);
                     pythonRepl = null;
                     replReady = false;
@@ -582,6 +668,9 @@ while True:
                 }
                 editor.setDecorations(executedDecoration, []);
                 editor.setDecorations(errorDecoration, []);
+                editor.setDecorations(gutterRunningDecoration, []);
+                editor.setDecorations(gutterExecutedDecoration, []);
+                editor.setDecorations(gutterErrorDecoration, []);
             }
         }
     }
@@ -599,9 +688,22 @@ while True:
                 return;
             }
 
-            editor.setDecorations(executedDecoration, []);
-            editor.setDecorations(errorDecoration, []);
-            startRunningAnimation(editor, [trimmedRange]);
+            pendingOutputShow = true;
+
+            const style = getMarkerStyle();
+
+            // Clear previous decorations only for styles that show them
+            if (style === 'border') {
+                editor.setDecorations(executedDecoration, []);
+                editor.setDecorations(errorDecoration, []);
+            } else if (style === 'gutter') {
+                editor.setDecorations(gutterExecutedDecoration, []);
+                editor.setDecorations(gutterErrorDecoration, []);
+            }
+
+            if (style !== 'off') {
+                startRunningAnimation(editor, [trimmedRange]);
+            }
 
             currentExecutionCallback = (execSuccess: boolean) => {
                 resolve({ success: execSuccess, executed: true });
@@ -703,8 +805,6 @@ while True:
                 vscode.window.showErrorMessage('Failed to start Python REPL. See "pylot" in Output.');
                 return;
             }
-        } else {
-            outputChannel.show(true);
         }
 
         // Require the language server to be active so smart selection works
@@ -719,6 +819,39 @@ while True:
         // If the selection ends at column 0 of a line, exclude that line
         if (!editor.selection.isEmpty && editor.selection.end.character === 0 && initialEndLine > initialStartLine) {
             initialEndLine--;
+        }
+
+        let isCellExecution = false;
+        let cellTargetLine = -1;
+
+        if (initialStartLine === initialEndLine) {
+            const startLineText = editor.document.lineAt(initialStartLine).text.trimLeft();
+            if (startLineText.startsWith('#%%')) {
+                isCellExecution = true;
+                let nextCellLine = -1;
+                let line = initialStartLine + 1;
+                while (line < editor.document.lineCount) {
+                    if (editor.document.lineAt(line).text.trimLeft().startsWith('#%%')) {
+                        nextCellLine = line;
+                        break;
+                    }
+                    line++;
+                }
+
+                if (nextCellLine !== -1) {
+                    initialEndLine = nextCellLine - 1;
+                    cellTargetLine = nextCellLine;
+                } else {
+                    const bounds = getCodeBounds(editor.document);
+                    initialEndLine = Math.max(initialStartLine, bounds.lastCodeLine);
+                    const target = findNextExecutableLine(editor.document, initialEndLine + 1);
+                    if (target >= 0) {
+                        cellTargetLine = target;
+                    } else if (initialEndLine + 1 < editor.document.lineCount) {
+                        cellTargetLine = initialEndLine + 1;
+                    }
+                }
+            }
         }
 
         // Trim leading non-executable lines (whitespace / comments)
@@ -737,12 +870,26 @@ while True:
 
         let executionSelection: vscode.Selection | null = null;
 
+        if (isCellExecution && initialStartLine <= initialEndLine) {
+            executionSelection = new vscode.Selection(
+                new vscode.Position(initialStartLine, editor.document.lineAt(initialStartLine).firstNonWhitespaceCharacterIndex),
+                new vscode.Position(initialEndLine, editor.document.lineAt(initialEndLine).text.length)
+            );
+        }
+
         // ── Empty-line handling ─────────────────────────────────────────
         // When the trimmed range contains no executable code, either expand
         // to the enclosing block (if the cursor is inside one) or skip to
         // the next executable line.
         if (initialStartLine > initialEndLine) {
             let isInnerBlock = false;
+
+            if (isCellExecution) {
+                if (moveCursor && cellTargetLine >= 0) {
+                    moveCursorToLine(editor, cellTargetLine);
+                }
+                return;
+            }
 
             if (editor.selection.isEmpty) {
                 try {
@@ -826,9 +973,15 @@ while True:
         // Advance the cursor before waiting for execution so the user can
         // continue editing immediately.
         if (canExecute && moveCursor) {
-            const targetLine = findNextExecutableLine(editor.document, executionSelection.end.line + 1);
-            if (targetLine >= 0) {
-                moveCursorToLine(editor, targetLine);
+            if (isCellExecution) {
+                if (cellTargetLine >= 0) {
+                    moveCursorToLine(editor, cellTargetLine);
+                }
+            } else {
+                const targetLine = findNextExecutableLine(editor.document, executionSelection.end.line + 1);
+                if (targetLine >= 0) {
+                    moveCursorToLine(editor, targetLine);
+                }
             }
         }
 
@@ -838,10 +991,22 @@ while True:
 
         if (result.executed) {
             stopRunningAnimation();
+            const style = getMarkerStyle();
+
             if (result.success) {
-                editor.setDecorations(executedDecoration, [trimmedRange]);
+                if (style === 'border') {
+                    editor.setDecorations(executedDecoration, [trimmedRange]);
+                }
+                if (style === 'gutter') {
+                    editor.setDecorations(gutterExecutedDecoration, [trimmedRange]);
+                }
             } else {
-                editor.setDecorations(errorDecoration, [trimmedRange]);
+                if (style === 'border') {
+                    editor.setDecorations(errorDecoration, [trimmedRange]);
+                }
+                if (style === 'gutter') {
+                    editor.setDecorations(gutterErrorDecoration, [trimmedRange]);
+                }
                 // On error, collapse the selection so the error range stays visible
                 const emptySelection = new vscode.Selection(originalSelection.active, originalSelection.active);
                 editor.selection = emptySelection;
@@ -930,6 +1095,10 @@ while True:
         vscode.window.showInformationMessage('All Pylot color marks removed.');
     });
 
+    const hideActiveLineMarkersCommand = vscode.commands.registerCommand('pylot.hideActiveLineMarkers', () => {
+        removeAllColorMarks();
+    });
+
     const evaluateExpressionCommand = vscode.commands.registerCommand('pylot.evaluateExpression', async () => {
         const editor = vscode.window.activeTextEditor;
         if (!editor) { return; }
@@ -965,6 +1134,8 @@ while True:
                 vscode.window.showErrorMessage('Failed to start Python REPL. See "pylot" in Output.');
                 return;
             }
+        } else {
+            outputChannel.show(true);
         }
 
         // Validate via the REPL (requires REPL to be running)
@@ -1179,14 +1350,52 @@ while True:
         vscode.window.showInformationMessage('Sent KeyboardInterrupt to Pylot REPL.');
     });
 
+    const openFileCommand = vscode.commands.registerCommand('pylot.openFileAtLine', (filePath: string, line: number) => {
+        vscode.workspace.openTextDocument(vscode.Uri.file(filePath)).then(doc => {
+            vscode.window.showTextDocument(doc, {
+                selection: new vscode.Range(line - 1, 0, line - 1, 0)
+            });
+        });
+    });
+
+    const linkProvider = vscode.languages.registerDocumentLinkProvider({ scheme: 'output' }, {
+        provideDocumentLinks(document) {
+            if (!document.uri.path.includes('pylot')) return [];
+
+            const links: vscode.DocumentLink[] = [];
+            const text = document.getText();
+            const regex = /File "(.*?)", line (\d+)/g;
+            let match;
+            while ((match = regex.exec(text)) !== null) {
+                const startPos = document.positionAt(match.index);
+                const endPos = document.positionAt(match.index + match[0].length);
+                const range = new vscode.Range(startPos, endPos);
+
+                const filePath = match[1];
+                const line = parseInt(match[2], 10);
+
+                const argsStr = JSON.stringify([filePath, line]);
+                const targetUri = vscode.Uri.parse(`command:pylot.openFileAtLine?${encodeURIComponent(argsStr)}`);
+
+                const link = new vscode.DocumentLink(range, targetUri);
+                link.tooltip = `Open ${filePath} at line ${line}`;
+                links.push(link);
+            }
+            return links;
+        }
+    });
+
     context.subscriptions.push(hoverProvider);
     context.subscriptions.push(executeCommand);
     context.subscriptions.push(executeNoMoveCommand);
     context.subscriptions.push(restartReplCommand);
     context.subscriptions.push(clearOutputCommand);
     context.subscriptions.push(removeColorMarksCommand);
+    context.subscriptions.push(hideActiveLineMarkersCommand);
     context.subscriptions.push(evaluateExpressionCommand);
     context.subscriptions.push(interruptCommand);
+    context.subscriptions.push(openFileCommand);
+    context.subscriptions.push(linkProvider);
 }
 
 // ── Deactivation ────────────────────────────────────────────────────────────

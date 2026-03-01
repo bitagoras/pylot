@@ -34,6 +34,21 @@
                     ],
                     "default": "auto",
                     "description": "Controls when the Matplotlib non-blocking event handler is injected into the REPL."
+                },
+                "pylot.executionMarkerStyle": {
+                    "type": "string",
+                    "enum": [
+                        "off",
+                        "border",
+                        "gutter"
+                    ],
+                    "enumDescriptions": [
+                        "Disable execution state markers.",
+                        "Use left-border line markers.",
+                        "Use gutter icon markers."
+                    ],
+                    "default": "gutter",
+                    "description": "Configures the visual style of execution state markers."
                 }
             }
         },
@@ -57,6 +72,10 @@
             {
                 "command": "pylot.removeColorMarks",
                 "title": "Pylot: Remove All Color Marks"
+            },
+            {
+                "command": "pylot.hideActiveLineMarkers",
+                "title": "Pylot: Hide Active Line Markers"
             },
             {
                 "command": "pylot.evaluateExpression",
