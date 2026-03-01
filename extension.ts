@@ -284,6 +284,14 @@ def read_stdin():
                         except Exception:
                             send_msg('evaluate_async', success=False)
                         continue
+                    elif action == 'interrupt':
+                        try:
+                            import _thread
+                            _thread.interrupt_main()
+                            send_msg('interrupt', success=True)
+                        except Exception:
+                            send_msg('interrupt', success=False)
+                        continue
             except Exception:
                 pass
 
@@ -352,10 +360,16 @@ while True:
                 compiled = compile(adjusted_code, filename, 'exec')
                 exec(compiled, persistent_globals)
                 send_msg('execute', success=True)
+        except KeyboardInterrupt:
+            print("\\nKeyboardInterrupt", file=sys.stderr)
+            send_msg('execute', success=False)
         except Exception:
             traceback.print_exc(file=sys.stderr)
             send_msg('execute', success=False)
 
+    except KeyboardInterrupt:
+        print("\\nKeyboardInterrupt", file=sys.stderr)
+        send_msg('execute', success=False)
     except Exception:
         traceback.print_exc(file=sys.stderr)
         send_msg('execute', success=False)
@@ -1122,6 +1136,17 @@ while True:
         }
     });
 
+    const interruptCommand = vscode.commands.registerCommand('pylot.interruptExecution', () => {
+        if (!pythonRepl || !replReady) {
+            vscode.window.showWarningMessage('Pylot REPL is not currently running.');
+            return;
+        }
+
+        const command = { action: 'interrupt' };
+        pythonRepl.stdin?.write(JSON.stringify(command) + '\n');
+        vscode.window.showInformationMessage('Sent KeyboardInterrupt to Pylot REPL.');
+    });
+
     context.subscriptions.push(hoverProvider);
     context.subscriptions.push(executeCommand);
     context.subscriptions.push(executeNoMoveCommand);
@@ -1129,6 +1154,7 @@ while True:
     context.subscriptions.push(clearOutputCommand);
     context.subscriptions.push(removeColorMarksCommand);
     context.subscriptions.push(evaluateExpressionCommand);
+    context.subscriptions.push(interruptCommand);
 }
 
 // ── Deactivation ────────────────────────────────────────────────────────────

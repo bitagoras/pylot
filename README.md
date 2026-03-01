@@ -1,19 +1,19 @@
 # Pylot – Python code runner
+A VS Code extension that runs Python code directly from the editor using smart selection and visual line markers.
 
-A VS Code extension that runs Python code directly from the editor with smart selection and visual line markers. Commands are entered in the editor itself — not copied to a terminal — so the editor acts as the input interface while results appear in a dedicated output panel. This lets you build up an interactive session that can be saved, reproduced, or finalized as a Python script.
-
-Pylot can be used for **interactive scientific computing** — for numerical analysis, data exploration, and plotting.
+It unifies a Python REPL with the editor in a clean, minimalist way, bringing your source code to life as a lightweight and flexible alternative to  notebooks for data science.
 
 ## Features
 
 - **Execute Python code** – Run selected code (or the current block) with `Shift+Enter` in a persistent Python REPL.
 - **Clean output window** – Output is displayed in a dedicated panel, without repeating the code lines.
-- **Visual line markers** – Gutter icons show smart selection and execution state:
+- **Visual line markers** – Line markers show smart selection and execution state:
   - 🟧 Orange (animated): currently running
   - 🟩 Green: successfully executed
   - 🟥 Red: error occurred
-- **Variable inspection** – Hover over any variable to see its type and value in a tooltip. Additionally, it shows the length of objects and the shape of NumPy arrays.
-- **Expression evaluation** – Select any expression and press `Ctrl+Shift+Space` to evaluate it and see the result in a tooltip. Also works without selection to inspect the variable at the cursor.
+- **Variable inspection** – Hover over any variable to see its type and current value in a tooltip, even while other code is running. Additionally, it shows the length of container objects and the shape of NumPy arrays.
+- **Expression evaluation** – Pressing `Ctrl+Shift+Space` evaluates any selected expression or variable at the cursor and shows the result in a tooltip.
+- **Execution interruption** – Easily interrupt long-running or stuck code using `Ctrl+Alt+C` without losing your REPL state.
 - **Matplotlib support** – Keeps multiple Matplotlib plot windows open and interactive while you continue working.
 
 <br>
@@ -60,6 +60,7 @@ Hover over any variable in your code after it has been executed. A tooltip will 
 | Clear Python Output | Clear the output channel | `Ctrl+Shift+C` |
 | Remove All Color Marks | Remove all gutter markers | – |
 | Evaluate Python Expression | Evaluate expression or variable and show tooltip | `Ctrl+Shift+Space` |
+| Interrupt Execution | Interrupt running code (sends KeyboardInterrupt) | `Shift+Escape` |
 
 ## Extension Settings
 
