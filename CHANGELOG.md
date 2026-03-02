@@ -1,0 +1,42 @@
+# Changelog
+
+All notable changes to the **Pylot** extension will be documented in this file.
+
+## [1.0.1] - 2026-03-02
+
+### Bug Fixes
+- **Execution Command Guard**: The execution command now has no effect for selected lines while code is already running. This prevents accidental multiple execution requests while the REPL is currently processing.
+- **Removed Duplicate Function**: Cleaned up the codebase by removing a redundant function.
+
+### Improvements
+- **Smaller File Size**: Significant reduction in extension package size due to a shorter and optimized `pylot.gif` preview.
+
+## [1.0.0] - 2026-03-01
+
+### New Features
+- **Interrupt Running Code**: Manually halt long-running tasks using `Ctrl+Alt+C` or the command palette.
+- **Customizable Line Markers**: Choose between gutter icons, left-border lines, or turn markers off via `pylot.executionMarkerStyle`.
+- **Hide Active Line Markers**: Quickly clear execution indicators with the new `Pylot: Hide Active Line Markers` command.
+- **Cell Block Execution**: Define cells with the `# %%` comment syntax for targeted execution.
+- **Live Variable Inspection**: Evaluate expressions and inspect variables interactively while code is running.
+- **Native Input Support**: Seamlessly handle Python's `input()` function via VS Code input boxes.
+
+### Bug Fixes
+- **Solidified REPL Communication**: Overhauled communication protocol for significantly better robustness and synchronization.
+
+## [0.6.0] - 2026-03-01 (Pre-release)
+
+### New Features
+- **Variable Inspection on Hover**: See type and value in native tooltips.
+- **Detailed Type Information**: Tooltips include length (for lists/strings) and shape (for NumPy arrays/tensors).
+- **On-Demand Expression Evaluation**: Evaluate selected expressions using `Ctrl+Shift+Space`.
+- **Safe Evaluation**: Explicit triggers for function calls in tooltips to prevent side effects.
+
+## [0.5.0] - 2026-02-28 (Initial Pre-release)
+
+### Core Features
+- **Smart Selection Execution**: Intelligent block detection.
+- **Persistent Background REPL**: Maintains state across executions.
+- **Visual Gutter Markers**: Color-coded states for Running (orange), Success (green), and Error (red).
+- **Matplotlib Support**: Interactive, non-blocking figures with `pylot.matplotlibEventHandler`.
+- **Output Management**: Dedicated clean output channel.

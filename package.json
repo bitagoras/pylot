@@ -2,7 +2,7 @@
     "name": "pylot",
     "displayName": "Pylot - Python code runner",
     "description": "Executes lines of Python code with visualized smart selection.",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "publisher": "bitagoras",
     "repository": "https://github.com/bitagoras/pylot",
     "engines": {
@@ -68,10 +68,6 @@
             {
                 "command": "pylot.clearOutput",
                 "title": "Pylot: Clear Python Output"
-            },
-            {
-                "command": "pylot.removeColorMarks",
-                "title": "Pylot: Remove All Color Marks"
             },
             {
                 "command": "pylot.hideActiveLineMarkers",

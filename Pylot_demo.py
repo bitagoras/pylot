@@ -25,16 +25,6 @@ import numpy
 matrix = numpy.random.randint(10, size=(4,5))
 
 # Multiple interactive plots can be plotted at the same time
-import matplotlib.pyplot as plt
-fig = plt.figure()
-x = numpy.linspace(0,10,500)
-for i in 1,2,3:
-    y = 0.2*numpy.cumsum(numpy.random.randn(500))
-    plt.plot(x, y+5*i)
-    plt.fill_between(x, y+5*i-0.1*y-1, y+5*i+0.1*y+1, alpha=0.2)
-plt.show()
-
-# The next figure can be shown while the first is visible
 fig = plt.figure()
 n, (r0, r1) = 100, numpy.random.rand(2)
 for i in range(n):
@@ -42,4 +32,14 @@ for i in range(n):
     x = (1 - 0.9*t/n) * numpy.cos(1.5*2*numpy.pi*(t+r0))
     y = (1 - 0.9*t/n) * (numpy.sin(3.008*2*numpy.pi*t) + numpy.sin(1.5*numpy.pi*(t+r1)))
     plt.plot(x, y, color=plt.cm.plasma(float(i)/n), alpha=0.9, lw=0.8)
+plt.show()
+
+# The next figure can be shown while the first is visible
+import matplotlib.pyplot as plt
+fig = plt.figure()
+x = numpy.linspace(0,10,500)
+for i in 1,2,3:
+    y = 0.2*numpy.cumsum(numpy.random.randn(500))
+    plt.plot(x, y+5*i)
+    plt.fill_between(x, y+5*i-0.1*y-1, y+5*i+0.1*y+1, alpha=0.2)
 plt.show()

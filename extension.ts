@@ -1012,10 +1012,6 @@ while True:
                 editor.selection = emptySelection;
                 editor.revealRange(emptySelection);
             }
-        } else {
-            const emptySelection = new vscode.Selection(originalSelection.active, originalSelection.active);
-            editor.selection = emptySelection;
-            editor.revealRange(emptySelection);
         }
     }
 
@@ -1089,12 +1085,6 @@ while True:
     const clearOutputCommand = vscode.commands.registerCommand('pylot.clearOutput', () => {
         outputChannel.clear();
     });
-
-    const removeColorMarksCommand = vscode.commands.registerCommand('pylot.removeColorMarks', () => {
-        removeAllColorMarks();
-        vscode.window.showInformationMessage('All Pylot color marks removed.');
-    });
-
     const hideActiveLineMarkersCommand = vscode.commands.registerCommand('pylot.hideActiveLineMarkers', () => {
         removeAllColorMarks();
     });
@@ -1390,7 +1380,6 @@ while True:
     context.subscriptions.push(executeNoMoveCommand);
     context.subscriptions.push(restartReplCommand);
     context.subscriptions.push(clearOutputCommand);
-    context.subscriptions.push(removeColorMarksCommand);
     context.subscriptions.push(hideActiveLineMarkersCommand);
     context.subscriptions.push(evaluateExpressionCommand);
     context.subscriptions.push(interruptCommand);
