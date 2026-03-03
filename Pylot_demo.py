@@ -25,6 +25,7 @@ import numpy
 matrix = numpy.random.randint(10, size=(4,5))
 
 # Multiple interactive plots can be plotted at the same time
+import matplotlib.pyplot as plt
 fig = plt.figure()
 n, (r0, r1) = 100, numpy.random.rand(2)
 for i in range(n):
@@ -35,7 +36,6 @@ for i in range(n):
 plt.show()
 
 # The next figure can be shown while the first is visible
-import matplotlib.pyplot as plt
 fig = plt.figure()
 x = numpy.linspace(0,10,500)
 for i in 1,2,3:
