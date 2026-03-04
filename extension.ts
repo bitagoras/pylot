@@ -215,7 +215,7 @@ export function activate(context: vscode.ExtensionContext) {
     async function getPythonPath(): Promise<string | undefined> {
         const pythonExtension = vscode.extensions.getExtension<PythonExtensionApi>('ms-python.python');
         if (!pythonExtension) {
-            vscode.window.showErrorMessage('The Python extension (ms-python.python) is required for this feature. Please install it.');
+            vscode.window.showErrorMessage('Pylot: The Python extension (ms-python.python) is required for this feature. Please install it.');
             return undefined;
         }
 
@@ -225,11 +225,45 @@ export function activate(context: vscode.ExtensionContext) {
 
         const environment = pythonExtension.exports.environments.getActiveEnvironmentPath();
         if (!environment?.path) {
-            vscode.window.showErrorMessage('No Python interpreter selected. Please select an interpreter using the "Python: Select Interpreter" command.');
+            vscode.window.showErrorMessage('Pylot: No Python interpreter selected. Please select an interpreter using the "Python: Select Interpreter" command.');
             return undefined;
         }
 
         return environment.path;
+    }
+
+    /**
+     * Resolves the working directory for the REPL using the 'pylot.replWorkingDirectory' setting.
+     * Supports variables like ${workspaceFolder}, ${fileDirname}, and ${file}.
+     */
+    function resolveWorkingDirectory(documentUri?: vscode.Uri): string {
+        const config = vscode.workspace.getConfiguration('pylot');
+        let cwdTemplate = config.get<string>('replWorkingDirectory', '${fileDirname}');
+
+        let workspaceFolder: string = process.cwd();
+        if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+            if (documentUri) {
+                const wf = vscode.workspace.getWorkspaceFolder(documentUri);
+                if (wf) {
+                    workspaceFolder = wf.uri.fsPath;
+                } else {
+                    workspaceFolder = vscode.workspace.workspaceFolders[0].uri.fsPath;
+                }
+            } else {
+                workspaceFolder = vscode.workspace.workspaceFolders[0].uri.fsPath;
+            }
+        }
+
+        let resolvedCwd = cwdTemplate.replace(/\$\{workspaceFolder\}/g, workspaceFolder);
+
+        if (documentUri && documentUri.scheme === 'file') {
+            const filePath = documentUri.fsPath;
+            const fileDirname = path.dirname(filePath);
+            resolvedCwd = resolvedCwd.replace(/\$\{fileDirname\}/g, fileDirname);
+            resolvedCwd = resolvedCwd.replace(/\$\{file\}/g, filePath);
+        }
+
+        return resolvedCwd;
     }
 
     // ── REPL management ─────────────────────────────────────────────────
@@ -341,6 +375,14 @@ def read_stdin():
                 command = json.loads(line.strip())
                 if isinstance(command, dict):
                     action = command.get('action')
+                    cmd_cwd = command.get('cwd')
+                    if cmd_cwd:
+                        try:
+                            if os.getcwd() != cmd_cwd:
+                                os.chdir(cmd_cwd)
+                        except Exception:
+                            pass
+
                     if action == 'input_reply':
                         input_reply_queue.put(command.get('value'))
                         continue
@@ -402,6 +444,14 @@ while True:
         command = json.loads(line.strip())
         action = command.get('action', 'execute')
         code = command['code']
+        cmd_cwd = command.get('cwd')
+
+        if cmd_cwd:
+            try:
+                if os.getcwd() != cmd_cwd:
+                    os.chdir(cmd_cwd)
+            except Exception:
+                pass
 
         adjusted_code = json.loads(code)
 
@@ -469,7 +519,7 @@ while True:
      * Resolves `true` once the REPL prints its ready message, or `false` on
      * timeout / error.
      */
-    async function startRepl(pythonPath: string): Promise<boolean> {
+    async function startRepl(pythonPath: string, documentUri?: vscode.Uri): Promise<boolean> {
         return new Promise((resolve) => {
             let resolved = false;
             const resolveOnce = (value: boolean) => {
@@ -501,7 +551,7 @@ while True:
                 }
                 env[pathKey] = binPaths + (env[pathKey] || '');
 
-                const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
+                const cwd = resolveWorkingDirectory(documentUri);
 
                 pythonRepl = spawn(pythonPath, ['-u', '-c', replWrapperCode], {
                     env: env,
@@ -706,6 +756,22 @@ while True:
             }
 
             currentExecutionCallback = (execSuccess: boolean) => {
+                stopRunningAnimation();
+                if (execSuccess) {
+                    if (style === 'border') {
+                        editor.setDecorations(executedDecoration, [trimmedRange]);
+                    }
+                    if (style === 'gutter') {
+                        editor.setDecorations(gutterExecutedDecoration, [trimmedRange]);
+                    }
+                } else {
+                    if (style === 'border') {
+                        editor.setDecorations(errorDecoration, [trimmedRange]);
+                    }
+                    if (style === 'gutter') {
+                        editor.setDecorations(gutterErrorDecoration, [trimmedRange]);
+                    }
+                }
                 resolve({ success: execSuccess, executed: true });
             };
 
@@ -790,7 +856,7 @@ while True:
      *
      * @param moveCursor If true, advance the cursor past the executed block.
      */
-    async function executeSelectedPython(editor: vscode.TextEditor, moveCursor: boolean): Promise<void> {
+    async function executeSelectedPython(editor: vscode.TextEditor, moveCursor: boolean, wholeProgram: boolean = false): Promise<void> {
         const pythonPath = await getPythonPath();
         if (!pythonPath) { return; }
 
@@ -800,9 +866,9 @@ while True:
             outputChannel.clear();
             outputChannel.show(true);
 
-            const success = await startRepl(pythonPath);
+            const success = await startRepl(pythonPath, editor.document.uri);
             if (!success) {
-                vscode.window.showErrorMessage('Failed to start Python REPL. See "pylot" in Output.');
+                vscode.window.showErrorMessage('Pylot: Failed to start Python.');
                 return;
             }
         }
@@ -816,15 +882,22 @@ while True:
         let initialStartLine = editor.selection.start.line;
         let initialEndLine = editor.selection.end.line;
 
-        // If the selection ends at column 0 of a line, exclude that line
-        if (!editor.selection.isEmpty && editor.selection.end.character === 0 && initialEndLine > initialStartLine) {
-            initialEndLine--;
+        if (wholeProgram) {
+            const bounds = getCodeBounds(editor.document);
+            if (bounds.lastCodeLine < bounds.firstCodeLine) return; // Empty file
+            initialStartLine = bounds.firstCodeLine;
+            initialEndLine = bounds.lastCodeLine;
+        } else {
+            // If the selection ends at column 0 of a line, exclude that line
+            if (!editor.selection.isEmpty && editor.selection.end.character === 0 && initialEndLine > initialStartLine) {
+                initialEndLine--;
+            }
         }
 
         let isCellExecution = false;
         let cellTargetLine = -1;
 
-        if (initialStartLine === initialEndLine) {
+        if (!wholeProgram && initialStartLine === initialEndLine) {
             const startLineText = editor.document.lineAt(initialStartLine).text.trimLeft();
             if (startLineText.startsWith('#%%')) {
                 isCellExecution = true;
@@ -959,7 +1032,8 @@ while True:
         const command = {
             code: JSON.stringify(code),
             filename: editor.document.fileName,
-            start_line: executionSelection.start.line + 1
+            start_line: executionSelection.start.line + 1,
+            cwd: resolveWorkingDirectory(editor.document.uri)
         };
 
         const trimmedRange = new vscode.Range(
@@ -987,31 +1061,11 @@ while True:
 
         const result = await executeInRepl(command, editor, trimmedRange, canExecute);
 
-        // ── Update line decorations ──────────────────────────────────────
-
-        if (result.executed) {
-            stopRunningAnimation();
-            const style = getMarkerStyle();
-
-            if (result.success) {
-                if (style === 'border') {
-                    editor.setDecorations(executedDecoration, [trimmedRange]);
-                }
-                if (style === 'gutter') {
-                    editor.setDecorations(gutterExecutedDecoration, [trimmedRange]);
-                }
-            } else {
-                if (style === 'border') {
-                    editor.setDecorations(errorDecoration, [trimmedRange]);
-                }
-                if (style === 'gutter') {
-                    editor.setDecorations(gutterErrorDecoration, [trimmedRange]);
-                }
-                // On error, collapse the selection so the error range stays visible
-                const emptySelection = new vscode.Selection(originalSelection.active, originalSelection.active);
-                editor.selection = emptySelection;
-                editor.revealRange(emptySelection);
-            }
+        if (result.executed && !result.success) {
+            // On error, collapse the selection so the error range stays visible
+            const emptySelection = new vscode.Selection(originalSelection.active, originalSelection.active);
+            editor.selection = emptySelection;
+            editor.revealRange(emptySelection);
         }
     }
 
@@ -1049,6 +1103,12 @@ while True:
         });
     }
 
+    // ── Execute Whole Program ───────────────────────────────────────────
+
+    async function executeWholeProgram(editor: vscode.TextEditor): Promise<void> {
+        await executeSelectedPython(editor, false, true);
+    }
+
     // ── Command registrations ───────────────────────────────────────────
 
     const restartReplCommand = vscode.commands.registerCommand('pylot.restartRepl', async () => {
@@ -1059,14 +1119,15 @@ while True:
 
         outputChannel.clear();
         outputChannel.show(true);
-        outputChannel.appendLine('[Restarting Python REPL...]');
+        outputChannel.appendLine('[Pylot: Restarting Python ...]');
 
-        const success = await startRepl(pythonPath);
+        const editor = vscode.window.activeTextEditor;
+        const success = await startRepl(pythonPath, editor?.document.uri);
         if (success) {
-            outputChannel.appendLine('[REPL ready]');
-            vscode.window.showInformationMessage('Python REPL restarted successfully.');
+            outputChannel.appendLine('[Pylot: Python ready]');
+            vscode.window.showInformationMessage('Pylot: Python restarted successfully.');
         } else {
-            vscode.window.showErrorMessage('Failed to restart Python REPL.');
+            vscode.window.showErrorMessage('Pylot: Failed to restart Python.');
         }
     });
 
@@ -1080,6 +1141,12 @@ while True:
         const editor = vscode.window.activeTextEditor;
         if (!editor) { return; }
         await executeSelectedPython(editor, false);
+    });
+
+    const executeWholeCommand = vscode.commands.registerCommand('pylot.executeWholeProgram', async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) { return; }
+        await executeWholeProgram(editor);
     });
 
     const clearOutputCommand = vscode.commands.registerCommand('pylot.clearOutput', () => {
@@ -1119,9 +1186,9 @@ while True:
             outputChannel.clear();
             outputChannel.show(true);
 
-            const success = await startRepl(pythonPath);
+            const success = await startRepl(pythonPath, editor.document.uri);
             if (!success) {
-                vscode.window.showErrorMessage('Failed to start Python REPL. See "pylot" in Output.');
+                vscode.window.showErrorMessage('Pylot: Failed to start Python.');
                 return;
             }
         } else {
@@ -1143,7 +1210,8 @@ while True:
             action: 'evaluate_async',
             code: JSON.stringify(code),
             filename: editor.document.fileName,
-            start_line: selection.start.line + 1
+            start_line: selection.start.line + 1,
+            cwd: resolveWorkingDirectory(editor.document.uri)
         };
 
         const result = await new Promise<{ success: boolean; executed: boolean }>((resolve) => {
@@ -1298,7 +1366,8 @@ while True:
                 action: 'evaluate_async',
                 code: JSON.stringify(expressionToEvaluate),
                 filename: document.fileName,
-                start_line: position.line + 1
+                start_line: position.line + 1,
+                cwd: resolveWorkingDirectory(document.uri)
             };
 
             const evalResult = await new Promise<{ success: boolean; executed: boolean }>((resolve) => {
@@ -1378,6 +1447,7 @@ while True:
     context.subscriptions.push(hoverProvider);
     context.subscriptions.push(executeCommand);
     context.subscriptions.push(executeNoMoveCommand);
+    context.subscriptions.push(executeWholeCommand);
     context.subscriptions.push(restartReplCommand);
     context.subscriptions.push(clearOutputCommand);
     context.subscriptions.push(hideActiveLineMarkersCommand);

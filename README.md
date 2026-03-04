@@ -4,11 +4,12 @@ A VS Code extension that runs Python code directly from the editor using smart s
 ## Features
 
 - **Execute Python code** – Run selected code (or the current block) with `Shift+Enter`.
-- **Smart selection** – The extension expands your selection to valid Python statements or blocks.
-- **Visual line markers** – Line markers shows the smart selection and execution state:
+- **Smart selection** – Selection will be expanded to execute only full valid Python statements or blocks.
+- **Visual line markers** – Line markers show the selection and execution state:
   - 🟧 Orange (animated): currently running
   - 🟩 Green: successfully executed
   - 🟥 Red: error occurred
+- **Execute whole program** – Run the entire file with `Shift+Ctrl+Alt+Enter`
 - **Clean output window** – Output is displayed in a dedicated panel, without copying the code.
 - **Variable inspection** – Hover over any variable to see its type and current value in a tooltip, even while the code is running. It also shows the length of sized objects and the shape of NumPy arrays.
 - **Expression evaluation** – Pressing `Ctrl+Shift+Space` evaluates any selected expression or variable at the cursor and shows the result in a tooltip.
@@ -28,11 +29,20 @@ A VS Code extension that runs Python code directly from the editor using smart s
 |---------|--------|------------------|
 | Execute Selected Python | Run selected code and advance cursor | `Shift+Enter` |
 | Execute Selected Python (No Cursor Move) | Run selected code, keep cursor in place | `Shift+Ctrl+Enter` |
+| Execute Whole Python Program | Run the entire file | `Shift+Ctrl+Alt+Enter` |
 | Restart Python REPL | Restart the REPL session | – |
 | Clear Python Output | Clear the output channel | `Ctrl+Shift+C` |
 | Hide Active Line Markers | Hide currently active line markers | – |
 | Evaluate Python Expression | Evaluate expression or variable and show tooltip | `Ctrl+Shift+Space` |
 | Interrupt Execution | Interrupt running code (sends KeyboardInterrupt) | `Ctrl+Alt+C` |
+
+## Configuration
+
+Pylot provides the following settings to customize its behavior:
+
+- `pylot.replWorkingDirectory`: Sets the working directory for the Python REPL. The directory is resolved every time code is executed. Supports standard VS Code variables like `${fileDirname}` (default, directory of the currently active file), `${workspaceFolder}`, and absolute paths.
+- `pylot.matplotlibEventHandler`: Controls when the Matplotlib non-blocking event handler is injected into the REPL (default: `auto`).
+- `pylot.executionMarkerStyle`: Configures the visual style of execution state markers. Options are `gutter`, `border` or `off` (default: `gutter`).
 
 ## Installation
 

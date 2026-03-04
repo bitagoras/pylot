@@ -2,6 +2,12 @@
 
 All notable changes to the **Pylot** extension will be documented in this file.
 
+## [1.1.0] - 2026-03-04
+
+### New Features
+- **Configurable REPL Working Directory**: Added `pylot.replWorkingDirectory` setting to control the REPL's current working directory. Defaults to the active file's directory (`${fileDirname}`).
+- **Execute Whole Program**: Added a new shortcut (`Shift+Ctrl+Alt+Enter`) and command (`Pylot: Execute Whole Python Program`) to execute the entire Python file.
+
 ## [1.0.1] - 2026-03-02
 
 ### Bug Fixes

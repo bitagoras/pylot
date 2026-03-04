@@ -2,7 +2,7 @@
     "name": "pylot",
     "displayName": "Pylot - Python code runner",
     "description": "Executes lines of Python code with visualized smart selection.",
-    "version": "1.0.1",
+    "version": "1.1.0",
     "publisher": "bitagoras",
     "repository": "https://github.com/bitagoras/pylot",
     "engines": {
@@ -20,6 +20,11 @@
         "configuration": {
             "title": "Pylot",
             "properties": {
+                "pylot.replWorkingDirectory": {
+                    "type": "string",
+                    "default": "${fileDirname}",
+                    "description": "Sets the working directory for the Python REPL. Supports VS Code variables like ${workspaceFolder} and ${fileDirname}."
+                },
                 "pylot.matplotlibEventHandler": {
                     "type": "string",
                     "enum": [
@@ -62,6 +67,10 @@
                 "title": "Pylot: Execute Selected Python (No Cursor Move)"
             },
             {
+                "command": "pylot.executeWholeProgram",
+                "title": "Pylot: Execute Whole Python Program"
+            },
+            {
                 "command": "pylot.restartRepl",
                 "title": "Pylot: Restart Python REPL"
             },
@@ -101,6 +110,11 @@
             {
                 "command": "pylot.executeSelectedPythonNoMove",
                 "key": "shift+ctrl+enter",
+                "when": "editorTextFocus && editorLangId == python && !findInputFocussed && !replaceInputFocussed && !suggestWidgetVisible"
+            },
+            {
+                "command": "pylot.executeWholeProgram",
+                "key": "shift+ctrl+alt+enter",
                 "when": "editorTextFocus && editorLangId == python && !findInputFocussed && !replaceInputFocussed && !suggestWidgetVisible"
             },
             {
