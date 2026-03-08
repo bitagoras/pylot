@@ -1,3 +1,6 @@
+if True:
+    print("hello world!")
+
 # <Shift> + <Enter> executes the smallest possible piece of code
 # block that includes the line at the cursor.
 print("hello world!")
