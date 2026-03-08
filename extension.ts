@@ -1279,14 +1279,41 @@ while True:
         // Advance the cursor before waiting for execution so the user can
         // continue editing immediately.
         if (canExecute && moveCursor) {
+            let targetLine = -1;
             if (isCellExecution) {
-                if (cellTargetLine >= 0) {
-                    moveCursorToLine(editor, cellTargetLine);
-                }
+                targetLine = cellTargetLine;
             } else {
-                const targetLine = findNextExecutableLine(editor.document, executionSelection.end.line + 1);
-                if (targetLine >= 0) {
-                    moveCursorToLine(editor, targetLine);
+                targetLine = findNextExecutableLine(editor.document, executionSelection.end.line + 1);
+            }
+
+            if (targetLine >= 0) {
+                moveCursorToLine(editor, targetLine);
+            } else {
+                // No executable line found below the selection.
+                // The user wants to move to one line after the block.
+                const lineAfterBlock = executionSelection.end.line + 1;
+
+                if (lineAfterBlock >= editor.document.lineCount) {
+                    // We are at the very end of the document.
+                    await editor.edit(editBuilder => {
+                        const lastLine = editor.document.lineAt(editor.document.lineCount - 1);
+                        editBuilder.insert(new vscode.Position(editor.document.lineCount - 1, lastLine.text.length), '\n');
+                    });
+                    moveCursorToLine(editor, lineAfterBlock);
+                } else {
+                    // There are lines after the block, but they aren't "executable" (likely comments or whitespace).
+                    const nextLineText = editor.document.lineAt(lineAfterBlock).text;
+                    if (nextLineText.trim().length === 0) {
+                        // It's an empty line already. Just move there.
+                        moveCursorToLine(editor, lineAfterBlock);
+                    } else {
+                        // It's not empty (e.g. a comment). Insert a newline so the block we just executed
+                        // is separated from what follows.
+                        await editor.edit(editBuilder => {
+                            editBuilder.insert(new vscode.Position(lineAfterBlock, 0), '\n');
+                        });
+                        moveCursorToLine(editor, lineAfterBlock);
+                    }
                 }
             }
         }
