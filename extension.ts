@@ -950,21 +950,25 @@ while True:
      * entire file (the root Module node). Returns the range of the deepest
      * top-level block that still fits inside the file bounds.
      */
+    /** Log the full SelectionRange chain for debugging. */
+    function logSelectionHierarchy(label: string, selectionRange: any, firstCodeLine: number, lastCodeLine: number) {
+        let debugNode = selectionRange;
+        let step = 0;
+        let debugStr = `[${label}] --- Hierarchy for selection ---\n`;
+        while (debugNode) {
+            const r = debugNode.range;
+            debugStr += `  [Step ${step}] Lines ${r.start.line + 1}-${r.end.line + 1} ` +
+                `(Chars ${r.start.character}-${r.end.character})\n`;
+            debugNode = debugNode.parent;
+            step++;
+        }
+        logDebug(debugStr + `  [File Bounds] Lines ${firstCodeLine + 1}-${lastCodeLine + 1}\n-----------------------------------------`);
+    }
+
     function getTopBlock(selectionRange: any, document: vscode.TextDocument): vscode.Range {
         const { firstCodeLine, lastCodeLine } = getCodeBounds(document);
 
-        // Debugging: Log the entire selection range hierarchy
-        let debugNode = selectionRange;
-        let hierarchyStep = 0;
-        let debugStr = `[getTopBlock] --- Hierarchy for selection ---\n`;
-        while (debugNode) {
-            const r = debugNode.range;
-            debugStr += `  [Step ${hierarchyStep}] Lines ${r.start.line + 1}-${r.end.line + 1} ` +
-                `(Chars ${r.start.character}-${r.end.character})\n`;
-            debugNode = debugNode.parent;
-            hierarchyStep++;
-        }
-        logDebug(debugStr + `  [File Bounds] Lines ${firstCodeLine + 1}-${lastCodeLine + 1}\n-----------------------------------------`);
+        logSelectionHierarchy('getTopBlock', selectionRange, firstCodeLine, lastCodeLine);
 
         let current = selectionRange;
         let blockRange = current.range;
@@ -1180,9 +1184,15 @@ while True:
         if (!executionSelection) {
             try {
                 const queryStart = new vscode.Position(initialStartLine, editor.document.lineAt(initialStartLine).firstNonWhitespaceCharacterIndex);
-                const queryEnd = new vscode.Position(initialEndLine, editor.document.lineAt(initialEndLine).firstNonWhitespaceCharacterIndex);
 
-                const ranges: any = await vscode.commands.executeCommand('vscode.executeSelectionRangeProvider', editor.document.uri, [queryStart, queryEnd]);
+                // Only query a second position when the selection actually spans multiple lines.
+                // Sending two positions on the same line causes Pylance to return two identical
+                // SelectionRange chains, which would make getTopBlock run (and log) twice.
+                const queryPositions = initialStartLine === initialEndLine
+                    ? [queryStart]
+                    : [queryStart, new vscode.Position(initialEndLine, editor.document.lineAt(initialEndLine).firstNonWhitespaceCharacterIndex)];
+
+                const ranges: any = await vscode.commands.executeCommand('vscode.executeSelectionRangeProvider', editor.document.uri, queryPositions);
 
                 if (!ranges || ranges.length === 0) {
                     logDebug(`[executeSelectedPython] Selection range provider returned 0 ranges. Falling back to cursor bounds.`);
@@ -1225,6 +1235,7 @@ while True:
                             const nextRanges: any = await vscode.commands.executeCommand('vscode.executeSelectionRangeProvider', editor.document.uri, [nextLinePos]);
 
                             if (nextRanges && nextRanges.length > 0) {
+                                logSelectionHierarchy('getTopBlock (peek-ahead)', nextRanges[0], firstCodeLine, lastCodeLine);
                                 let peekNode = nextRanges[0];
 
                                 // Walk up the next line's AST chain
