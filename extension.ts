@@ -1209,6 +1209,18 @@ while True:
 
                         const nextLine = findNextExecutableLine(editor.document, firstCodeLine + 1);
                         if (nextLine > firstCodeLine && nextLine <= lastCodeLine) {
+                            // The next executable line is indented relative to firstCodeLine,
+                            // which means firstCodeLine is a block header (e.g. `if True:`).
+                            // We MUST find the enclosing block node via peek-ahead; if we
+                            // cannot (e.g. because the language server is not yet ready and
+                            // only returns a shallow Module-root), we do nothing rather than
+                            // send an incomplete statement to the REPL.
+                            const firstLineIndent = editor.document.lineAt(firstCodeLine).firstNonWhitespaceCharacterIndex;
+                            const nextLineIndent = editor.document.lineAt(nextLine).firstNonWhitespaceCharacterIndex;
+                            const nextLineIsChild = nextLineIndent > firstLineIndent;
+
+                            let peekSucceeded = false;
+
                             const nextLinePos = new vscode.Position(nextLine, editor.document.lineAt(nextLine).firstNonWhitespaceCharacterIndex);
                             const nextRanges: any = await vscode.commands.executeCommand('vscode.executeSelectionRangeProvider', editor.document.uri, [nextLinePos]);
 
@@ -1221,20 +1233,32 @@ while True:
 
                                     // If we find a node that perfectly starts on our original line
                                     // AND spans down to cover our next line, then Pylance acknowledges
-                                    // this is a single, contiguous multi-line block!
-                                    if (r.start.line === firstCodeLine && r.end.line >= nextLine) {
-                                        // Note: We deliberately do NOT restrict r.end.line to be < lastCodeLine here.
-                                        // In unsaved/untitled files with trailing whitespace, Pylance's Module
-                                        // node often extends past our calculated lastCodeLine. If we find ANY node
-                                        // that starts on Line 1 and spans multiple lines, it's safer to execute it
-                                        // all than to mistakenly execute just Line 1 and crash.
+                                    // this is a single, contiguous multi-line block.
+                                    //
+                                    // Guard: reject any node whose end line exceeds lastCodeLine.
+                                    // That is the hallmark of the shallow Module-root node that
+                                    // Pylance returns when the language server is not yet fully
+                                    // initialised. A real block node always ends at or before the
+                                    // last code line. Adopting a Module-root here would execute the
+                                    // entire file, which must never happen.
+                                    if (r.start.line === firstCodeLine && r.end.line >= nextLine && r.end.line <= lastCodeLine) {
                                         logDebug(`[executeSelectedPython] Applied Peek-Ahead Fix: Adopting node spanning ${r.start.line + 1}-${r.end.line + 1}`);
                                         executionSelection = new vscode.Selection(r.start, r.end);
+                                        peekSucceeded = true;
                                         break;
                                     }
 
                                     peekNode = peekNode.parent;
                                 }
+                            }
+
+                            // If the cursor is on a block header (next line is indented) but
+                            // the language server could not provide a proper block range, do
+                            // nothing. Sending only the header line would produce a syntax
+                            // error in the REPL.
+                            if (!peekSucceeded && nextLineIsChild) {
+                                logDebug(`[executeSelectedPython] Peek-Ahead found no valid block (LS not ready?). Aborting to avoid sending incomplete statement.`);
+                                return;
                             }
                         }
                     }
