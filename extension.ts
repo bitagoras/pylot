@@ -23,6 +23,7 @@ import * as vscode from 'vscode';
 import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -48,6 +49,9 @@ let lastExpressionLen: string = '';
 let asyncExpressionResultCallback: ((success: boolean, resultText: string, type: string, shape: string, len: string) => void) | null = null;
 let debugMode = false;
 let silentEvaluation = false;
+
+/** Tracks the resolved working directory most recently applied to the REPL process. */
+let currentReplCwd: string | undefined = undefined;
 
 /** Log a message to the output channel if debug mode is enabled. */
 function logDebug(message: string): void {
@@ -246,58 +250,84 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     /**
-     * Resolves the working directory for the REPL using the 'pylot.replWorkingDirectory' setting.
-     * Supports variables like ${workspaceFolder}, ${fileDirname}, and ${file}.
+     * Resolves the working directory for the REPL from the ordered fallback list
+     * in `pylot.replWorkingDirectory`.
+     *
+     * Each entry is tried in order. The first entry whose variables can be fully
+     * resolved AND whose resulting path exists on disk is returned.
+     *
+     * `${fileDirname}` is skipped for untitled / non-file documents.
+     * `${workspaceFolder}` is skipped when no workspace is open.
+     * `${userHome}` maps to the OS home directory.
+     *
+     * Returns `undefined` when no entry resolves (caller should preserve the
+     * current REPL working directory by omitting the `cwd` field from commands).
      */
-    function resolveWorkingDirectory(documentUri?: vscode.Uri): string {
+    function resolveWorkingDirectory(documentUri?: vscode.Uri): string | undefined {
         const config = vscode.workspace.getConfiguration('pylot');
-        let cwdTemplate = config.get<string>('replWorkingDirectory', '${fileDirname}');
+        // Accept both the new array format and the old string format (backward compat).
+        const rawSetting = config.get('replWorkingDirectory');
+        const candidates: string[] = Array.isArray(rawSetting)
+            ? rawSetting as string[]
+            : (typeof rawSetting === 'string' && rawSetting.trim() !== '')
+                ? [rawSetting as string]
+                : ['${fileDirname}', '${workspaceFolder}', '${userHome}'];
 
-        let workspaceFolder: string = process.cwd();
+        const isFile = documentUri?.scheme === 'file';
+
+        // Resolve ${workspaceFolder} once
+        let workspaceFolderPath: string | undefined;
         if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
             if (documentUri) {
                 const wf = vscode.workspace.getWorkspaceFolder(documentUri);
-                if (wf) {
-                    workspaceFolder = wf.uri.fsPath;
-                } else {
-                    workspaceFolder = vscode.workspace.workspaceFolders[0].uri.fsPath;
-                }
+                workspaceFolderPath = wf
+                    ? wf.uri.fsPath
+                    : vscode.workspace.workspaceFolders[0].uri.fsPath;
             } else {
-                workspaceFolder = vscode.workspace.workspaceFolders[0].uri.fsPath;
+                workspaceFolderPath = vscode.workspace.workspaceFolders[0].uri.fsPath;
             }
         }
 
-        let fileDirname = "."; // Default to current directory
-        let filePath = "";
+        const filePath = isFile ? documentUri!.fsPath : undefined;
+        const fileDirname = filePath ? path.dirname(filePath) : undefined;
+        const userHome = os.homedir();
 
-        if (documentUri && documentUri.scheme === 'file') {
-            filePath = documentUri.fsPath;
-            fileDirname = path.dirname(filePath);
-        } else {
-            // For untitled or non-file documents, use workspace folder as fallback
-            if (workspaceFolder) {
-                fileDirname = workspaceFolder;
+        for (const template of candidates) {
+            // Check whether this template requires ${fileDirname} or ${file}
+            // which are unavailable for untitled documents – skip if so.
+            if (!isFile && /\$\{fileDirname\}|\$\{file\}/.test(template)) {
+                logDebug(`[resolveWorkingDirectory] Skipping entry (no file path for untitled): ${template}`);
+                continue;
+            }
+            // Skip entries that require ${workspaceFolder} when no workspace is open.
+            if (!workspaceFolderPath && /\$\{workspaceFolder\}/.test(template)) {
+                logDebug(`[resolveWorkingDirectory] Skipping entry (no workspace folder): ${template}`);
+                continue;
+            }
+
+            let resolved = template;
+            if (fileDirname) {
+                resolved = resolved.replace(/\$\{fileDirname\}/g, fileDirname);
+            }
+            if (filePath) {
+                resolved = resolved.replace(/\$\{file\}/g, filePath);
+            }
+            if (workspaceFolderPath) {
+                resolved = resolved.replace(/\$\{workspaceFolder\}/g, workspaceFolderPath);
+            }
+            resolved = resolved.replace(/\$\{userHome\}/g, userHome);
+            resolved = path.normalize(resolved);
+
+            if (fs.existsSync(resolved)) {
+                logDebug(`[resolveWorkingDirectory] Resolved to: ${resolved}`);
+                return resolved;
             } else {
-                // Ultimate fallback to the process's current working directory
-                fileDirname = process.cwd();
+                logDebug(`[resolveWorkingDirectory] Path does not exist, skipping: ${resolved}`);
             }
         }
 
-        let resolvedCwd = cwdTemplate.replace(/\$\{workspaceFolder\}/g, workspaceFolder);
-        resolvedCwd = resolvedCwd.replace(/\$\{fileDirname\}/g, fileDirname);
-
-        // Only replace ${file} if the document has an actual file path
-        if (documentUri && documentUri.scheme === 'file') {
-            resolvedCwd = resolvedCwd.replace(/\$\{file\}/g, filePath);
-        } else {
-            // For untitled files, remove ${file} from template or use empty string
-            resolvedCwd = resolvedCwd.replace(/\$\{file\}/g, "");
-        }
-
-        // Clean up any double slashes or trailing separators that might result from replacement
-        resolvedCwd = path.normalize(resolvedCwd);
-
-        return resolvedCwd;
+        logDebug('[resolveWorkingDirectory] No candidate resolved to an existing path, returning undefined.');
+        return undefined;
     }
 
     // ── REPL management ─────────────────────────────────────────────────
@@ -595,20 +625,18 @@ while True:
                 }
                 env[pathKey] = binPaths + (env[pathKey] || '');
 
-                cwd = resolveWorkingDirectory(documentUri);
+                const resolvedCwd = resolveWorkingDirectory(documentUri);
+                // For the initial REPL spawn we must have a concrete directory;
+                // fall back to the process cwd if nothing resolves (e.g. untitled
+                // file opened without a workspace).
+                cwd = resolvedCwd ?? process.cwd();
                 logDebug(`[startRepl] Resolved working directory: ${cwd}`);
 
-                // Validate that we have a valid working directory (especially for untitled files)
-                if (!cwd || cwd.trim() === '') {
-                    logDebug('[startRepl] Could not determine working directory - file is unsaved without workspace');
-                    outputChannel.show(true);
-                    outputChannel.appendLine(`[ERROR] Could not determine working directory. The file is unsaved and no workspace folder is available.`);
-                    outputChannel.appendLine(`Please save the file or open a workspace folder to set a valid working directory.`);
-                    resolveOnce(false);
-                    return;
-                }
+                // Track this as the current REPL working directory.
+                currentReplCwd = cwd;
 
-                // Ensure the working directory exists before spawning
+                // The new resolveWorkingDirectory already checks existsSync;
+                // but if we fell back to process.cwd() we still validate.
                 if (!fs.existsSync(cwd)) {
                     logDebug(`[startRepl] Working directory does not exist, attempting to create: ${cwd}`);
                     try {
@@ -1296,11 +1324,21 @@ while True:
         // ── Build and send the command ──────────────────────────────────
 
         const code = editor.document.getText(executionSelection);
+        // Resolve the working directory.
+        // For named files, resolve using the fallback list.
+        // For untitled files, pass undefined so no chdir happens in the REPL.
+        const resolvedExecCwd = editor.document.uri.scheme === 'file'
+            ? resolveWorkingDirectory(editor.document.uri)
+            : undefined;
+        if (resolvedExecCwd) {
+            currentReplCwd = resolvedExecCwd;
+        }
+
         const command = {
             code: JSON.stringify(code),
             filename: editor.document.fileName,
             start_line: executionSelection.start.line + 1,
-            cwd: resolveWorkingDirectory(editor.document.uri)
+            ...(resolvedExecCwd ? { cwd: resolvedExecCwd } : {})
         };
 
         const trimmedRange = new vscode.Range(
@@ -1514,12 +1552,19 @@ while True:
         lastExpressionShape = '';
         lastExpressionLen = '';
 
+        const resolvedEvalCwd = editor.document.uri.scheme === 'file'
+            ? resolveWorkingDirectory(editor.document.uri)
+            : undefined;
+        if (resolvedEvalCwd) {
+            currentReplCwd = resolvedEvalCwd;
+        }
+
         const command = {
             action: 'evaluate_async',
             code: JSON.stringify(code),
             filename: editor.document.fileName,
             start_line: selection.start.line + 1,
-            cwd: resolveWorkingDirectory(editor.document.uri)
+            ...(resolvedEvalCwd ? { cwd: resolvedEvalCwd } : {})
         };
 
         const result = await new Promise<{ success: boolean; executed: boolean }>((resolve) => {
@@ -1670,12 +1715,19 @@ while True:
             lastExpressionShape = '';
             lastExpressionLen = '';
 
+            const resolvedHoverCwd = document.uri.scheme === 'file'
+                ? resolveWorkingDirectory(document.uri)
+                : undefined;
+            if (resolvedHoverCwd) {
+                currentReplCwd = resolvedHoverCwd;
+            }
+
             const command = {
                 action: 'evaluate_async',
                 code: JSON.stringify(expressionToEvaluate),
                 filename: document.fileName,
                 start_line: position.line + 1,
-                cwd: resolveWorkingDirectory(document.uri)
+                ...(resolvedHoverCwd ? { cwd: resolvedHoverCwd } : {})
             };
 
             const evalResult = await new Promise<{ success: boolean; executed: boolean }>((resolve) => {

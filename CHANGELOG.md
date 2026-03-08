@@ -6,6 +6,7 @@ All notable changes to the **Pylot** extension will be documented in this file.
 
 ### New Features
 - **Debug Mode**: Added `pylot.debugMode` setting to enable detailed execution diagnostics in the output panel.
+- **Working Directory Fallback List**: `pylot.replWorkingDirectory` is now an ordered list of candidate directories. Each entry is tried in sequence; the first that resolves to an existing path is used. Supports `${fileDirname}`, `${workspaceFolder}`, `${userHome}`, and absolute paths. Entries requiring a file path (e.g. `${fileDirname}`) are automatically skipped for unnamed files, so the REPL retains the working directory of the last executed named file.
 
 ### Bug Fixes
 - **First Line Block**: Fixed an issue where the first line of a code block was not correctly identified.

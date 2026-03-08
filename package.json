@@ -21,9 +21,16 @@
             "title": "Pylot",
             "properties": {
                 "pylot.replWorkingDirectory": {
-                    "type": "string",
-                    "default": "${fileDirname}",
-                    "description": "Sets the working directory for the Python REPL. Supports VS Code variables like ${workspaceFolder} and ${fileDirname}."
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "default": [
+                        "${fileDirname}",
+                        "${workspaceFolder}",
+                        "${userHome}"
+                    ],
+                    "description": "Ordered list of candidate working directories for the Python REPL. Each entry is tried in order; the first one that resolves to an existing directory is used. Supports VS Code variables: ${fileDirname} (directory of the active file, skipped for unnamed files), ${workspaceFolder}, ${userHome}, and absolute paths. For unnamed (untitled) files, entries that cannot be resolved are skipped, so the REPL keeps its current working directory unchanged."
                 },
                 "pylot.matplotlibEventHandler": {
                     "type": "string",

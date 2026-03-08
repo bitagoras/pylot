@@ -40,7 +40,7 @@ A VS Code extension that runs Python code directly from the editor using smart s
 
 Pylot provides the following settings to customize its behavior:
 
-- `pylot.replWorkingDirectory`: Sets the working directory for the Python REPL. The directory is resolved every time code is executed. Supports standard VS Code variables like `${fileDirname}` (default, directory of the currently active file), `${workspaceFolder}`, and absolute paths.
+- `pylot.replWorkingDirectory`: Ordered list of candidate working directories for the Python REPL. Each entry is tried from left to right; the first one that resolves to an existing directory is used. Supports VS Code variables: `${fileDirname}` (directory of the active file), `${workspaceFolder}`, `${userHome}`, and absolute paths. Default: `["${fileDirname}", "${workspaceFolder}", "${userHome}"]`.
 - `pylot.matplotlibEventHandler`: Controls when the Matplotlib non-blocking event handler is injected into the REPL (default: `auto`).
 - `pylot.executionMarkerStyle`: Configures the visual style of execution state markers. Options are `gutter`, `border` or `off` (default: `gutter`).
 
