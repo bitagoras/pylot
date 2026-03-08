@@ -1,5 +1,5 @@
 # Pylot – Python code runner
-A VS Code extension that runs Python code directly from the editor using smart selection and visual line markers. It turns your editor into an interactive Python environment and lets you write, run and evaluate Python code at one place. Use it as a lightweight and flexible alternative to data science notebooks.
+A VS Code extension that runs Python code directly from the editor using smart selection and visual line markers. It turns your editor into an interactive Python environment and lets you write, run and evaluate Python code at one place and the same time. Use it as a lightweight and flexible alternative to data science notebooks.
 
 ## Features
 
@@ -49,7 +49,7 @@ Pylot provides the following settings to customize its behavior:
 1. Open **Extensions** in VS Code (`Ctrl+Shift+X`).
 2. Search for **Pylot** and click **Install**.
 3. The required Python extension (`ms-python.python`) will be installed automatically.
-4. If other Python extensions have claimed `Shift+Enter` or `Ctrl+Shift+Enter`, you may need to remove those bindings:
+4. If other Python extensions have claimed `Shift+Enter`, `Ctrl+Shift+Enter` or `Shift+Ctrl+Alt+Enter`, you may need to remove those bindings:
    - Open the command palette (`Ctrl+Shift+P`) → **Preferences: Open Keyboard Shortcuts**.
    - Search for the conflicting shortcut and remove or reassign it.
 
