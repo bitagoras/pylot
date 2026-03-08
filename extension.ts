@@ -22,6 +22,7 @@
 import * as vscode from 'vscode';
 import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
+import * as fs from 'fs';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -45,10 +46,18 @@ let lastExpressionType: string = '';
 let lastExpressionShape: string = '';
 let lastExpressionLen: string = '';
 let asyncExpressionResultCallback: ((success: boolean, resultText: string, type: string, shape: string, len: string) => void) | null = null;
-const DEBUG_MODE = false;
+let debugMode = false;
 let silentEvaluation = false;
+
+/** Log a message to the output channel if debug mode is enabled. */
+function logDebug(message: string): void {
+    if (debugMode) {
+        outputChannel.appendLine(`[Pylot DEBUG] ${message}`);
+    }
+}
 let runningAnimTimer: ReturnType<typeof setInterval> | null = null;
 let pendingOutputShow = false;
+let replStartPromise: Promise<boolean> | null = null;
 
 // ── Timeout constants ───────────────────────────────────────────────────────
 
@@ -67,6 +76,10 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.executeCommand('setContext', 'pylotMarkerActive', true);
 
     outputChannel = vscode.window.createOutputChannel("pylot");
+
+    // Initialize debug mode from settings
+    const config = vscode.workspace.getConfiguration('pylot');
+    debugMode = config.get<boolean>('debugMode', false);
 
     // ── Line decorations (left-border style) ─────────────────────────────
     //
@@ -254,14 +267,35 @@ export function activate(context: vscode.ExtensionContext) {
             }
         }
 
-        let resolvedCwd = cwdTemplate.replace(/\$\{workspaceFolder\}/g, workspaceFolder);
+        let fileDirname = "."; // Default to current directory
+        let filePath = "";
 
         if (documentUri && documentUri.scheme === 'file') {
-            const filePath = documentUri.fsPath;
-            const fileDirname = path.dirname(filePath);
-            resolvedCwd = resolvedCwd.replace(/\$\{fileDirname\}/g, fileDirname);
-            resolvedCwd = resolvedCwd.replace(/\$\{file\}/g, filePath);
+            filePath = documentUri.fsPath;
+            fileDirname = path.dirname(filePath);
+        } else {
+            // For untitled or non-file documents, use workspace folder as fallback
+            if (workspaceFolder) {
+                fileDirname = workspaceFolder;
+            } else {
+                // Ultimate fallback to the process's current working directory
+                fileDirname = process.cwd();
+            }
         }
+
+        let resolvedCwd = cwdTemplate.replace(/\$\{workspaceFolder\}/g, workspaceFolder);
+        resolvedCwd = resolvedCwd.replace(/\$\{fileDirname\}/g, fileDirname);
+
+        // Only replace ${file} if the document has an actual file path
+        if (documentUri && documentUri.scheme === 'file') {
+            resolvedCwd = resolvedCwd.replace(/\$\{file\}/g, filePath);
+        } else {
+            // For untitled files, remove ${file} from template or use empty string
+            resolvedCwd = resolvedCwd.replace(/\$\{file\}/g, "");
+        }
+
+        // Clean up any double slashes or trailing separators that might result from replacement
+        resolvedCwd = path.normalize(resolvedCwd);
 
         return resolvedCwd;
     }
@@ -520,15 +554,25 @@ while True:
      * timeout / error.
      */
     async function startRepl(pythonPath: string, documentUri?: vscode.Uri): Promise<boolean> {
-        return new Promise((resolve) => {
+        if (replStartPromise) {
+            logDebug('[startRepl] REPL is already starting, awaiting existing promise...');
+            return replStartPromise;
+        }
+
+        replStartPromise = new Promise((resolve) => {
             let resolved = false;
             const resolveOnce = (value: boolean) => {
                 if (resolved) return;
                 resolved = true;
+                replStartPromise = null;
                 resolve(value);
             };
 
+            let cwd = '';
             try {
+                logDebug(`[startRepl] Starting REPL with Python path: ${pythonPath}`);
+                logDebug(`[startRepl] Document URI: ${documentUri?.toString()}`);
+
                 const config = vscode.workspace.getConfiguration('pylot');
                 const mplMode = config.get<string>('matplotlibEventHandler', 'auto');
 
@@ -551,19 +595,51 @@ while True:
                 }
                 env[pathKey] = binPaths + (env[pathKey] || '');
 
-                const cwd = resolveWorkingDirectory(documentUri);
+                cwd = resolveWorkingDirectory(documentUri);
+                logDebug(`[startRepl] Resolved working directory: ${cwd}`);
 
-                pythonRepl = spawn(pythonPath, ['-u', '-c', replWrapperCode], {
+                // Validate that we have a valid working directory (especially for untitled files)
+                if (!cwd || cwd.trim() === '') {
+                    logDebug('[startRepl] Could not determine working directory - file is unsaved without workspace');
+                    outputChannel.show(true);
+                    outputChannel.appendLine(`[ERROR] Could not determine working directory. The file is unsaved and no workspace folder is available.`);
+                    outputChannel.appendLine(`Please save the file or open a workspace folder to set a valid working directory.`);
+                    resolveOnce(false);
+                    return;
+                }
+
+                // Ensure the working directory exists before spawning
+                if (!fs.existsSync(cwd)) {
+                    logDebug(`[startRepl] Working directory does not exist, attempting to create: ${cwd}`);
+                    try {
+                        fs.mkdirSync(cwd, { recursive: true });
+                        logDebug(`[startRepl] Successfully created working directory: ${cwd}`);
+                    } catch (mkdirError) {
+                        logDebug(`[startRepl] Failed to create working directory: ${cwd}`);
+                        outputChannel.show(true);
+                        outputChannel.appendLine(`[ERROR] Failed to create working directory "${cwd}" for REPL. Please check your 'pylot.replWorkingDirectory' setting.`);
+                        resolveOnce(false);
+                        return;
+                    }
+                } else {
+                    logDebug(`[startRepl] Working directory exists: ${cwd}`);
+                }
+
+                logDebug(`[startRepl] Spawning REPL process with cwd: ${cwd}`);
+                const currentProcess = spawn(pythonPath, ['-u', '-c', replWrapperCode], {
                     env: env,
                     cwd: cwd
                 });
+                pythonRepl = currentProcess;
 
                 replReady = false;
                 currentPythonPath = pythonPath;
 
                 let stdoutBuffer = '';
 
-                pythonRepl.stdout?.on('data', (data) => {
+                currentProcess.stdout?.on('data', (data) => {
+                    if (pythonRepl !== currentProcess) return;
+
                     stdoutBuffer += data.toString();
 
                     let newlineIndex: number;
@@ -661,25 +737,76 @@ while True:
                     }
                 });
 
-                pythonRepl.stderr?.on('data', (data) => {
-                    if (!silentEvaluation) {
-                        if (pendingOutputShow) {
-                            outputChannel.show(true);
-                            pendingOutputShow = false;
-                        }
-                        outputChannel.append(data.toString());
+                currentProcess.stderr?.on('data', (data) => {
+                    if (pythonRepl !== currentProcess) return;
+
+                    const stderrText = data.toString();
+                    if (stderrText) {
+                        outputChannel.show(true);
+                        outputChannel.appendLine(`[Python stderr] ${stderrText}`);
                     }
                 });
 
-                pythonRepl.on('close', (code) => {
+                currentProcess.on('close', (code) => {
+                    if (pythonRepl !== currentProcess) {
+                        logDebug(`[startRepl] Old REPL process closed with code: ${code}`);
+                        return;
+                    }
+
+                    logDebug(`[startRepl] REPL process closed with code: ${code}`);
                     pythonRepl = null;
                     replReady = false;
-                    outputChannel.appendLine(`[REPL process closed with code ${code}]`);
+                    if (code === null) {
+                        // null exit code typically means the process crashed during startup
+                        logDebug(`[startRepl] REPL process exited with code null - startup crash`);
+                        outputChannel.appendLine(`[ERROR] REPL process crashed during startup. This may indicate the Python executable is not working correctly or there was a startup error.`);
+                        outputChannel.appendLine(`[ERROR] Working directory: ${cwd}`);
+                        outputChannel.appendLine(`[ERROR] Python path: ${pythonPath}`);
+                        resolveOnce(false);
+                    } else if (code !== 0) {
+                        // Non-zero exit code indicates an error
+                        logDebug(`[startRepl] REPL process exited with non-zero code ${code}`);
+                        outputChannel.appendLine(`[ERROR] REPL process exited with non-zero code ${code}. This may indicate the Python executable is not working correctly or there was a startup error.`);
+                        resolveOnce(false);
+                    } else {
+                        outputChannel.appendLine(`[REPL process closed normally]`);
+                    }
                 });
 
-                pythonRepl.on('error', (err) => {
+                currentProcess.on('error', (err: any) => {
+                    if (pythonRepl !== currentProcess) {
+                        logDebug(`[startRepl] Old REPL process error: ${err.code || 'unknown'}`);
+                        return;
+                    }
+
+                    logDebug(`[startRepl] REPL process error: ${err.code || 'unknown'}, message: ${err.message}`);
                     outputChannel.show(true);
-                    outputChannel.appendLine(`[ERROR] Failed to start REPL: ${err.message}`);
+                    const cwdMessage = `(Current working directory: ${cwd})`;
+                    // Check if the error is about a missing file (ENOENT)
+                    if (err.code === 'ENOENT') {
+                        // ENOENT can mean either the Python executable doesn't exist OR the working directory doesn't exist
+                        logDebug('[startRepl] ENOENT error - file not found');
+                        outputChannel.appendLine(`[ERROR] Failed to start REPL.`);
+                        if (pythonPath && !fs.existsSync(pythonPath)) {
+                            logDebug(`[startRepl] Python executable not found at: ${pythonPath}`);
+                            outputChannel.appendLine(`The Python executable was not found at "${pythonPath}".`);
+                            outputChannel.appendLine(`Please check your Python interpreter path in the settings (pylot.pythonExecutable).`);
+                        } else if (!fs.existsSync(cwd)) {
+                            logDebug(`[startRepl] Working directory does not exist: ${cwd}`);
+                            outputChannel.appendLine(`The working directory could not be accessed: ${cwd}`);
+                            outputChannel.appendLine(`The file may be unsaved without a workspace folder. Please save the file or ensure a valid workspace is open.`);
+                        } else {
+                            logDebug(`[startRepl] ENOENT but both Python and cwd exist - unknown cause`);
+                            outputChannel.appendLine(`Either the Python executable was not found at "${pythonPath}" or the working directory could not be accessed.`);
+                            outputChannel.appendLine(`Please check your Python interpreter path and ensure the working directory exists.`);
+                        }
+                        outputChannel.appendLine(cwdMessage);
+                    } else {
+                        logDebug(`[startRepl] Non-ENOENT error: ${err.code || 'unknown'}`);
+                        outputChannel.appendLine(`[ERROR] Failed to start REPL. This might be due to an incorrect Python path or an invalid working directory.`);
+                        outputChannel.appendLine(`Please check your Python interpreter settings and 'pylot.replWorkingDirectory'.`);
+                        outputChannel.appendLine(`${err.message} ${cwdMessage}`);
+                    }
                     pythonRepl = null;
                     replReady = false;
                     resolveOnce(false);
@@ -691,19 +818,39 @@ while True:
                 }, REPL_STARTUP_TIMEOUT_MS);
 
             } catch (err: any) {
-                outputChannel.appendLine(`[ERROR] Exception starting REPL: ${err.message}`);
+                logDebug(`[startRepl] Exception in startRepl: ${err.message}`);
+                outputChannel.show(true);
+                const cwdMessage = `(Current working directory: ${cwd})`;
+                if (pythonPath && !fs.existsSync(pythonPath)) {
+                    logDebug(`[startRepl] Python executable not found at: ${pythonPath}`);
+                    outputChannel.appendLine(`[ERROR] Exception when attempting to start REPL.`);
+                    outputChannel.appendLine(`The Python executable was not found at "${pythonPath}".`);
+                    outputChannel.appendLine(`Please check your Python interpreter path in the settings (pylot.pythonExecutable).`);
+                } else {
+                    logDebug(`[startRepl] Exception but Python executable exists - cwd issue?`);
+                    outputChannel.appendLine(`[ERROR] Exception when attempting to start REPL. This might be due to an incorrect Python path or an invalid working directory.`);
+                    outputChannel.appendLine(`Please check your Python interpreter settings and 'pylot.replWorkingDirectory'.`);
+                }
+                outputChannel.appendLine(err.message + ' ' + cwdMessage);
                 resolveOnce(false);
             }
         });
+        return replStartPromise;
     }
 
     /** Kill the REPL process if it is running. */
     function stopRepl() {
+        if (currentExecutionCallback) {
+            currentExecutionCallback(false);
+            currentExecutionCallback = null;
+        }
+
         if (pythonRepl) {
             pythonRepl.kill();
             pythonRepl = null;
             replReady = false;
         }
+        replStartPromise = null;
     }
 
     // ── Line decoration helpers ─────────────────────────────────────────
@@ -805,18 +952,45 @@ while True:
      */
     function getTopBlock(selectionRange: any, document: vscode.TextDocument): vscode.Range {
         const { firstCodeLine, lastCodeLine } = getCodeBounds(document);
+
+        // Debugging: Log the entire selection range hierarchy
+        let debugNode = selectionRange;
+        let hierarchyStep = 0;
+        let debugStr = `[getTopBlock] --- Hierarchy for selection ---\n`;
+        while (debugNode) {
+            const r = debugNode.range;
+            debugStr += `  [Step ${hierarchyStep}] Lines ${r.start.line + 1}-${r.end.line + 1} ` +
+                `(Chars ${r.start.character}-${r.end.character})\n`;
+            debugNode = debugNode.parent;
+            hierarchyStep++;
+        }
+        logDebug(debugStr + `  [File Bounds] Lines ${firstCodeLine + 1}-${lastCodeLine + 1}\n-----------------------------------------`);
+
         let current = selectionRange;
         let blockRange = current.range;
 
         while (current.parent) {
             const parentRange = current.parent.range;
-            // Stop before selecting the entire file
-            if (parentRange.start.line <= firstCodeLine && parentRange.end.line >= lastCodeLine) {
-                break;
+            // Stop before selecting the entire file (the Module root).
+            if (firstCodeLine < lastCodeLine && parentRange.start.line <= firstCodeLine && parentRange.end.line >= lastCodeLine) {
+                // But if blockRange is MORE indented than the first code line, it is nested
+                // inside a block whose header is at the top of the file. Pylance sometimes
+                // omits the intermediate Block node in this case (skipping directly to Module).
+                // We must adopt the parent so the block body is included.
+                // Top-level independent statements will always have the same indentation as
+                // the first code line, so they break here correctly.
+                const blockIndent = document.lineAt(blockRange.start.line).firstNonWhitespaceCharacterIndex;
+                const firstLineIndent = document.lineAt(firstCodeLine).firstNonWhitespaceCharacterIndex;
+                if (blockIndent <= firstLineIndent) {
+                    break;
+                }
+                // Nested body line: adopt this parent range and keep going.
             }
             blockRange = parentRange;
             current = current.parent;
         }
+
+        logDebug(`[getTopBlock] Selected Range: Lines ${blockRange.start.line + 1}-${blockRange.end.line + 1}`);
         return blockRange;
     }
 
@@ -860,25 +1034,26 @@ while True:
         const pythonPath = await getPythonPath();
         if (!pythonPath) { return; }
 
+        // For untitled files, we may not have document symbols yet.
+        const isUntitled = editor.document.uri.scheme === 'untitled';
+
+        // We no longer require the language server to be active to execute code.
+        // If it isn't active, the SelectionRangeProvider will simply fall back
+        // to evaluating the exact text highlighted by the user's cursor.
+
         // Start REPL if not running or if the interpreter changed
-        if (!pythonRepl || !replReady || currentPythonPath !== pythonPath || DEBUG_MODE) {
+        if (!pythonRepl || !replReady || currentPythonPath !== pythonPath) {
             stopRepl();
             outputChannel.clear();
             outputChannel.show(true);
 
             const success = await startRepl(pythonPath, editor.document.uri);
             if (!success) {
-                vscode.window.showErrorMessage('Pylot: Failed to start Python.');
+                // The detailed error message is already shown in the output channel
+                vscode.window.showErrorMessage('Pylot: Failed to start Python REPL. Please check the "Pylot" output panel for details and review your Python interpreter settings and `pylot.replWorkingDirectory`.');
                 return;
             }
         }
-
-        // Require the language server to be active so smart selection works
-        const symbols: any = await vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', editor.document.uri);
-        if (!symbols || symbols.length === 0) {
-            return;
-        }
-
         let initialStartLine = editor.selection.start.line;
         let initialEndLine = editor.selection.end.line;
 
@@ -1010,20 +1185,77 @@ while True:
                 const ranges: any = await vscode.commands.executeCommand('vscode.executeSelectionRangeProvider', editor.document.uri, [queryStart, queryEnd]);
 
                 if (!ranges || ranges.length === 0) {
-                    return;
+                    logDebug(`[executeSelectedPython] Selection range provider returned 0 ranges. Falling back to cursor bounds.`);
+                    executionSelection = new vscode.Selection(queryStart, new vscode.Position(initialEndLine, editor.document.lineAt(initialEndLine).text.length));
+                } else {
+                    const startBlockRange = getTopBlock(ranges[0], editor.document);
+                    const endBlockRange = ranges.length > 1 ? getTopBlock(ranges[1], editor.document) : startBlockRange;
+
+                    executionSelection = new vscode.Selection(startBlockRange.start, endBlockRange.end);
+
+                    // ── Pylance Edge Case: Top-level block headers ────────────────────
+                    // If the selection is exactly one line long, and that line is the VERY FIRST
+                    // executable line in the file, Pylance will often omit the actual Block
+                    // node from the AST chain, jumping straight from the Header node to the
+                    // Module root. This orphans the block body.
+                    // We must peek ahead to the next line and check if it's structurally
+                    // a child of our first line.
+                    const { firstCodeLine, lastCodeLine } = getCodeBounds(editor.document);
+
+                    // Only apply if the selection spans exactly the first code line, AND the active cursor is actually on that line.
+                    if (executionSelection.start.line === firstCodeLine &&
+                        executionSelection.end.line === firstCodeLine &&
+                        editor.selection.active.line === firstCodeLine) {
+
+                        const nextLine = findNextExecutableLine(editor.document, firstCodeLine + 1);
+                        if (nextLine > firstCodeLine && nextLine <= lastCodeLine) {
+                            const nextLinePos = new vscode.Position(nextLine, editor.document.lineAt(nextLine).firstNonWhitespaceCharacterIndex);
+                            const nextRanges: any = await vscode.commands.executeCommand('vscode.executeSelectionRangeProvider', editor.document.uri, [nextLinePos]);
+
+                            if (nextRanges && nextRanges.length > 0) {
+                                let peekNode = nextRanges[0];
+
+                                // Walk up the next line's AST chain
+                                while (peekNode) {
+                                    const r = peekNode.range;
+
+                                    // If we find a node that perfectly starts on our original line
+                                    // AND spans down to cover our next line, then Pylance acknowledges
+                                    // this is a single, contiguous multi-line block!
+                                    if (r.start.line === firstCodeLine && r.end.line >= nextLine) {
+                                        // Note: We deliberately do NOT restrict r.end.line to be < lastCodeLine here.
+                                        // In unsaved/untitled files with trailing whitespace, Pylance's Module
+                                        // node often extends past our calculated lastCodeLine. If we find ANY node
+                                        // that starts on Line 1 and spans multiple lines, it's safer to execute it
+                                        // all than to mistakenly execute just Line 1 and crash.
+                                        logDebug(`[executeSelectedPython] Applied Peek-Ahead Fix: Adopting node spanning ${r.start.line + 1}-${r.end.line + 1}`);
+                                        executionSelection = new vscode.Selection(r.start, r.end);
+                                        break;
+                                    }
+
+                                    peekNode = peekNode.parent;
+                                }
+                            }
+                        }
+                    }
                 }
-
-                const startBlockRange = getTopBlock(ranges[0], editor.document);
-                const endBlockRange = ranges.length > 1 ? getTopBlock(ranges[1], editor.document) : startBlockRange;
-
-                executionSelection = new vscode.Selection(startBlockRange.start, endBlockRange.end);
             } catch (e) {
-                return;
+                logDebug(`[executeSelectedPython] Selection range provider failed. Falling back to cursor bounds.`);
+                executionSelection = new vscode.Selection(
+                    new vscode.Position(initialStartLine, editor.document.lineAt(initialStartLine).firstNonWhitespaceCharacterIndex),
+                    new vscode.Position(initialEndLine, editor.document.lineAt(initialEndLine).text.length)
+                );
             }
         }
 
         if (executionSelection.isEmpty) {
-            return;
+            executionSelection = new vscode.Selection(
+                new vscode.Position(initialStartLine, editor.document.lineAt(initialStartLine).firstNonWhitespaceCharacterIndex),
+                new vscode.Position(initialEndLine, editor.document.lineAt(initialEndLine).text.length)
+            );
+            if (executionSelection.isEmpty) {
+                return;
+            }
         }
 
         // ── Build and send the command ──────────────────────────────────
@@ -1122,12 +1354,14 @@ while True:
         outputChannel.appendLine('[Pylot: Restarting Python ...]');
 
         const editor = vscode.window.activeTextEditor;
+        const config = vscode.workspace.getConfiguration('pylot');
+        debugMode = config.get<boolean>('debugMode', false);
         const success = await startRepl(pythonPath, editor?.document.uri);
         if (success) {
             outputChannel.appendLine('[Pylot: Python ready]');
             vscode.window.showInformationMessage('Pylot: Python restarted successfully.');
         } else {
-            vscode.window.showErrorMessage('Pylot: Failed to restart Python.');
+            vscode.window.showErrorMessage('Pylot: Failed to restart Python REPL. Please check the output channel for details and review your Python interpreter settings and `pylot.replWorkingDirectory`.');
         }
     });
 
@@ -1177,20 +1411,32 @@ while True:
             return;
         }
 
+        logDebug(`[evaluateExpression] Starting execution for file: ${editor.document.fileName}`);
+
         const pythonPath = await getPythonPath();
-        if (!pythonPath) { return; }
+        if (!pythonPath) {
+            logDebug('[evaluateExpression] No Python path found');
+            return;
+        }
+        logDebug(`[evaluateExpression] Using Python path: ${pythonPath}`);
 
         // Start REPL if not running or if the interpreter changed
-        if (!pythonRepl || !replReady || currentPythonPath !== pythonPath || DEBUG_MODE) {
+        if (!pythonRepl || !replReady || currentPythonPath !== pythonPath) {
+            logDebug('[evaluateExpression] Restarting REPL due to configuration change');
             stopRepl();
             outputChannel.clear();
             outputChannel.show(true);
 
             const success = await startRepl(pythonPath, editor.document.uri);
             if (!success) {
-                vscode.window.showErrorMessage('Pylot: Failed to start Python.');
+                logDebug('[evaluateExpression] Failed to start REPL');
+                const errorMsg = editor.document.isUntitled
+                    ? `Pylot: Cannot execute code in unsaved files. Please save the file first.`
+                    : `Pylot: Failed to start Python interpreter. Please check your Python path settings.`;
+                vscode.window.showErrorMessage(errorMsg);
                 return;
             }
+            logDebug('[evaluateExpression] REPL started successfully');
         } else {
             outputChannel.show(true);
         }

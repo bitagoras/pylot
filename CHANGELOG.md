@@ -2,6 +2,15 @@
 
 All notable changes to the **Pylot** extension will be documented in this file.
 
+## [1.2.0] - 2026-03-08
+
+### New Features
+- **Debug Mode**: Added `pylot.debugMode` setting to enable detailed execution diagnostics in the output panel.
+
+### Bug Fixes
+- **First Line Block**: Fixed an issue where the first line of a code block was not correctly identified.
+- **Untitled Files**: Improved support for executing code in unsaved or unnamed files.
+
 ## [1.1.0] - 2026-03-04
 
 ### New Features

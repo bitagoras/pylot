@@ -2,7 +2,7 @@
     "name": "pylot",
     "displayName": "Pylot - Python code runner",
     "description": "Executes lines of Python code with visualized smart selection.",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "publisher": "bitagoras",
     "repository": "https://github.com/bitagoras/pylot",
     "engines": {
@@ -54,6 +54,11 @@
                     ],
                     "default": "gutter",
                     "description": "Configures the visual style of execution state markers."
+                },
+                "pylot.debugMode": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Enables detailed debug output in the Pylot output panel to help diagnose issues with code execution. (Requires REPL restart to take effect)"
                 }
             }
         },
