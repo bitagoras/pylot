@@ -159,36 +159,54 @@ export function activate(context: vscode.ExtensionContext) {
         }));
     }
 
-    let runningAnimEditor: vscode.TextEditor | null = null;
+    let runningAnimDocumentUri: string | null = null;
     let runningAnimRanges: vscode.Range[] = [];
     let runningAnimFrame = 0;
 
+    function applyRunningAnimationToVisibleEditors(oldFrame: number, newFrame: number) {
+        if (!runningAnimDocumentUri) return;
+        for (const editor of vscode.window.visibleTextEditors) {
+            if (editor.document.uri.toString() === runningAnimDocumentUri) {
+                const style = getMarkerStyle();
+                if (style === 'border') {
+                    if (oldFrame >= 0) editor.setDecorations(runningFrames[oldFrame], []);
+                    editor.setDecorations(runningFrames[newFrame], runningAnimRanges);
+                }
+            }
+        }
+    }
+
     function startRunningAnimation(editor: vscode.TextEditor, ranges: vscode.Range[]) {
         stopRunningAnimation();
-        runningAnimEditor = editor;
+
+        // Clear any persistent executed/error markers for this document so we strictly show ONLY the running marker
+        const uriString = editor.document.uri.toString();
+        documentMarkers.delete(uriString);
+        for (const ed of vscode.window.visibleTextEditors) {
+            if (ed.document.uri.toString() === uriString) {
+                applyMarkers(ed);
+            }
+        }
+
+        runningAnimDocumentUri = uriString;
         runningAnimRanges = ranges;
         runningAnimFrame = 0;
 
         const style = getMarkerStyle();
         if (style === 'gutter') {
-            editor.setDecorations(gutterRunningDecoration, ranges);
-        }
-
-        if (style === 'border') {
-            // Show the first frame immediately
-            editor.setDecorations(runningFrames[0], ranges);
+            for (const ed of vscode.window.visibleTextEditors) {
+                if (ed.document.uri.toString() === runningAnimDocumentUri) {
+                    ed.setDecorations(gutterRunningDecoration, ranges);
+                }
+            }
+        } else if (style === 'border') {
+            applyRunningAnimationToVisibleEditors(-1, 0);
 
             runningAnimTimer = setInterval(() => {
-                if (!runningAnimEditor) { return; }
-                // Hold a reference to the previous frame
+                if (!runningAnimDocumentUri) { return; }
                 const previousFrame = runningAnimFrame;
-
-                // Advance to the new frame and show it first
                 runningAnimFrame = (runningAnimFrame + 1) % RUNNING_FRAMES;
-                runningAnimEditor.setDecorations(runningFrames[runningAnimFrame], runningAnimRanges);
-
-                // Now safely clear the previous frame after the new one is already active
-                runningAnimEditor.setDecorations(runningFrames[previousFrame], []);
+                applyRunningAnimationToVisibleEditors(previousFrame, runningAnimFrame);
             }, RUNNING_INTERVAL_MS);
         }
     }
@@ -198,13 +216,17 @@ export function activate(context: vscode.ExtensionContext) {
             clearInterval(runningAnimTimer);
             runningAnimTimer = null;
         }
-        if (runningAnimEditor) {
-            for (let i = 0; i < RUNNING_FRAMES; i++) {
-                runningAnimEditor.setDecorations(runningFrames[i], []);
+        if (runningAnimDocumentUri) {
+            for (const ed of vscode.window.visibleTextEditors) {
+                if (ed.document.uri.toString() === runningAnimDocumentUri) {
+                    for (let i = 0; i < RUNNING_FRAMES; i++) {
+                        ed.setDecorations(runningFrames[i], []);
+                    }
+                    ed.setDecorations(gutterRunningDecoration, []);
+                }
             }
-            runningAnimEditor.setDecorations(gutterRunningDecoration, []);
         }
-        runningAnimEditor = null;
+        runningAnimDocumentUri = null;
         runningAnimRanges = [];
     }
 
@@ -883,11 +905,101 @@ while True:
 
     // ── Line decoration helpers ─────────────────────────────────────────
 
+    interface EditorMarkers {
+        executed: vscode.Range[];
+        error: vscode.Range[];
+    }
+    const documentMarkers = new Map<string, EditorMarkers>();
+
+    function applyMarkers(editor: vscode.TextEditor) {
+        if (editor.document.languageId !== 'python') return;
+        const key = editor.document.uri.toString();
+        const markers = documentMarkers.get(key) || { executed: [], error: [] };
+        const style = getMarkerStyle();
+
+        if (style === 'border') {
+            editor.setDecorations(executedDecoration, markers.executed);
+            editor.setDecorations(errorDecoration, markers.error);
+            editor.setDecorations(gutterExecutedDecoration, []);
+            editor.setDecorations(gutterErrorDecoration, []);
+        } else if (style === 'gutter') {
+            editor.setDecorations(gutterExecutedDecoration, markers.executed);
+            editor.setDecorations(gutterErrorDecoration, markers.error);
+            editor.setDecorations(executedDecoration, []);
+            editor.setDecorations(errorDecoration, []);
+        } else {
+            editor.setDecorations(executedDecoration, []);
+            editor.setDecorations(errorDecoration, []);
+            editor.setDecorations(gutterExecutedDecoration, []);
+            editor.setDecorations(gutterErrorDecoration, []);
+        }
+    }
+
+    function addMarker(editor: vscode.TextEditor, range: vscode.Range, isError: boolean) {
+        const key = editor.document.uri.toString();
+
+        // Ensure only ONE marker is visible per file
+        const markers: EditorMarkers = { executed: [], error: [] };
+
+        if (isError) {
+            markers.error.push(range);
+        } else {
+            markers.executed.push(range);
+        }
+        documentMarkers.set(key, markers);
+
+        // Apply to all visible editors rendering this document
+        for (const visibleEditor of vscode.window.visibleTextEditors) {
+            if (visibleEditor.document.uri.toString() === key) {
+                applyMarkers(visibleEditor);
+            }
+        }
+    }
+
+    vscode.window.onDidChangeVisibleTextEditors(editors => {
+        for (const editor of editors) {
+            applyMarkers(editor);
+
+            if (runningAnimDocumentUri && editor.document.uri.toString() === runningAnimDocumentUri) {
+                const style = getMarkerStyle();
+                if (style === 'gutter') {
+                    editor.setDecorations(gutterRunningDecoration, runningAnimRanges);
+                } else if (style === 'border') {
+                    editor.setDecorations(runningFrames[runningAnimFrame], runningAnimRanges);
+                }
+            }
+        }
+    }, null, context.subscriptions);
+
     /** Clear all Pylot line decorations from every visible Python editor. */
     function removeAllColorMarks() {
         stopRunningAnimation();
+        documentMarkers.clear();
         for (const editor of vscode.window.visibleTextEditors) {
             if (editor.document.languageId === 'python') {
+                for (let i = 0; i < RUNNING_FRAMES; i++) {
+                    editor.setDecorations(runningFrames[i], []);
+                }
+                editor.setDecorations(executedDecoration, []);
+                editor.setDecorations(errorDecoration, []);
+                editor.setDecorations(gutterRunningDecoration, []);
+                editor.setDecorations(gutterExecutedDecoration, []);
+                editor.setDecorations(gutterErrorDecoration, []);
+            }
+        }
+    }
+
+    /** Clear Pylot line decorations only for the active editor(s) showing its document. */
+    function removeActiveEditorColorMarks() {
+        const activeEditor = vscode.window.activeTextEditor;
+        if (!activeEditor) return;
+
+        stopRunningAnimation();
+        const key = activeEditor.document.uri.toString();
+        documentMarkers.delete(key);
+
+        for (const editor of vscode.window.visibleTextEditors) {
+            if (editor.document.uri.toString() === key) {
                 for (let i = 0; i < RUNNING_FRAMES; i++) {
                     editor.setDecorations(runningFrames[i], []);
                 }
@@ -917,35 +1029,14 @@ while True:
 
             const style = getMarkerStyle();
 
-            // Clear previous decorations only for styles that show them
-            if (style === 'border') {
-                editor.setDecorations(executedDecoration, []);
-                editor.setDecorations(errorDecoration, []);
-            } else if (style === 'gutter') {
-                editor.setDecorations(gutterExecutedDecoration, []);
-                editor.setDecorations(gutterErrorDecoration, []);
-            }
-
             if (style !== 'off') {
                 startRunningAnimation(editor, [trimmedRange]);
             }
 
             currentExecutionCallback = (execSuccess: boolean) => {
                 stopRunningAnimation();
-                if (execSuccess) {
-                    if (style === 'border') {
-                        editor.setDecorations(executedDecoration, [trimmedRange]);
-                    }
-                    if (style === 'gutter') {
-                        editor.setDecorations(gutterExecutedDecoration, [trimmedRange]);
-                    }
-                } else {
-                    if (style === 'border') {
-                        editor.setDecorations(errorDecoration, [trimmedRange]);
-                    }
-                    if (style === 'gutter') {
-                        editor.setDecorations(gutterErrorDecoration, [trimmedRange]);
-                    }
+                if (style !== 'off') {
+                    addMarker(editor, trimmedRange, !execSuccess);
                 }
                 resolve({ success: execSuccess, executed: true });
             };
@@ -1487,7 +1578,7 @@ while True:
         outputChannel.clear();
     });
     const hideActiveLineMarkersCommand = vscode.commands.registerCommand('pylot.hideActiveLineMarkers', () => {
-        removeAllColorMarks();
+        removeActiveEditorColorMarks();
     });
 
     const evaluateExpressionCommand = vscode.commands.registerCommand('pylot.evaluateExpression', async () => {

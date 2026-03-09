@@ -2,6 +2,11 @@
 
 All notable changes to the **Pylot** extension will be documented in this file.
 
+## [1.2.4] - 2026-03-09
+
+### Bug Fixes
+- **Color Marker Persistence**: Color execution markers now persist per-document across editor tabs.
+
 ## [1.2.0] - 2026-03-08
 
 ### New Features

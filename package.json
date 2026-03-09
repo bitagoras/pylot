@@ -2,7 +2,7 @@
     "name": "pylot",
     "displayName": "Pylot - Python code runner",
     "description": "Executes lines of Python code with visualized smart selection.",
-    "version": "1.2.3",
+    "version": "1.2.4",
     "publisher": "bitagoras",
     "repository": "https://github.com/bitagoras/pylot",
     "engines": {
@@ -30,7 +30,7 @@
                         "${workspaceFolder}",
                         "${userHome}"
                     ],
-                    "description": "Ordered list of candidate working directories for the Python REPL. Each entry is tried in order; the first one that resolves to an existing directory is used. Supports VS Code variables: ${fileDirname} (directory of the active file, skipped for unnamed files), ${workspaceFolder}, ${userHome}, and absolute paths. For unnamed (untitled) files, entries that cannot be resolved are skipped, so the REPL keeps its current working directory unchanged."
+                    "description": "Ordered list of candidate working directories for the Python session. Each entry is tried in order; the first one that resolves to an existing directory is used. Supports VS Code variables: ${fileDirname} (directory of the active file, skipped for unnamed files), ${workspaceFolder}, ${userHome}, and absolute paths. For unnamed (untitled) files, entries that cannot be resolved are skipped, so the Python session keeps its current working directory unchanged."
                 },
                 "pylot.matplotlibEventHandler": {
                     "type": "string",
@@ -45,7 +45,7 @@
                         "Never load Matplotlib event handler."
                     ],
                     "default": "auto",
-                    "description": "Controls when the Matplotlib non-blocking event handler is injected into the REPL."
+                    "description": "Controls when the Matplotlib non-blocking event handler is injected into the Python session."
                 },
                 "pylot.executionMarkerStyle": {
                     "type": "string",
@@ -65,7 +65,7 @@
                 "pylot.debugMode": {
                     "type": "boolean",
                     "default": false,
-                    "description": "Enables detailed debug output in the Pylot output panel to help diagnose issues with code execution. (Requires REPL restart to take effect)"
+                    "description": "Enables detailed debug output in the Pylot output panel to help diagnose issues with code execution. (Requires Python restart to take effect)"
                 }
             }
         },
@@ -83,8 +83,8 @@
                 "title": "Pylot: Execute Whole Python Program"
             },
             {
-                "command": "pylot.restartRepl",
-                "title": "Pylot: Restart Python REPL"
+                "command": "pylot.restartPython",
+                "title": "Pylot: Restart Python Session"
             },
             {
                 "command": "pylot.clearOutput",
