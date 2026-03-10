@@ -2,8 +2,15 @@
 
 All notable changes to the **Pylot** extension will be documented in this file.
 
-## [1.2.4] - 2026-03-09
+## [1.2.5] - 2026-03-10
 
+### Bug Fixes
+- **Start REPL Function**: Fixed a bug related to the renamed `startRepl` function.
+
+### Improvements
+- **Keybinding Precedence**: Improved the precedence of Pylot's keybindings (like `Shift+Enter`) so they reliably outperform the Python extension's defaults when editing Python files.
+
+## [1.2.4] - 2026-03-09
 ### Bug Fixes
 - **Color Marker Persistence**: Color execution markers now persist per-document across editor tabs.
 

@@ -78,6 +78,7 @@ const MPL_EVENT_PUMP_INTERVAL_S = 0.05;
 
 export function activate(context: vscode.ExtensionContext) {
     vscode.commands.executeCommand('setContext', 'pylotMarkerActive', true);
+    vscode.commands.executeCommand('setContext', 'pylotActive', true);
 
     outputChannel = vscode.window.createOutputChannel("pylot");
 
@@ -605,9 +606,9 @@ while True:
      * Resolves `true` once the REPL prints its ready message, or `false` on
      * timeout / error.
      */
-    async function startRepl(pythonPath: string, documentUri?: vscode.Uri): Promise<boolean> {
+    async function startPython(pythonPath: string, documentUri?: vscode.Uri): Promise<boolean> {
         if (replStartPromise) {
-            logDebug('[startRepl] REPL is already starting, awaiting existing promise...');
+            logDebug('[startPython] REPL is already starting, awaiting existing promise...');
             return replStartPromise;
         }
 
@@ -622,8 +623,8 @@ while True:
 
             let cwd = '';
             try {
-                logDebug(`[startRepl] Starting REPL with Python path: ${pythonPath}`);
-                logDebug(`[startRepl] Document URI: ${documentUri?.toString()}`);
+                logDebug(`[startPython] Starting Python with path: ${pythonPath}`);
+                logDebug(`[startPython] Document URI: ${documentUri?.toString()}`);
 
                 const config = vscode.workspace.getConfiguration('pylot');
                 const mplMode = config.get<string>('matplotlibEventHandler', 'auto');
@@ -652,7 +653,7 @@ while True:
                 // fall back to the process cwd if nothing resolves (e.g. untitled
                 // file opened without a workspace).
                 cwd = resolvedCwd ?? process.cwd();
-                logDebug(`[startRepl] Resolved working directory: ${cwd}`);
+                logDebug(`[startPython] Resolved working directory: ${cwd}`);
 
                 // Track this as the current REPL working directory.
                 currentReplCwd = cwd;
@@ -660,22 +661,22 @@ while True:
                 // The new resolveWorkingDirectory already checks existsSync;
                 // but if we fell back to process.cwd() we still validate.
                 if (!fs.existsSync(cwd)) {
-                    logDebug(`[startRepl] Working directory does not exist, attempting to create: ${cwd}`);
+                    logDebug(`[startPython] Working directory does not exist, attempting to create: ${cwd}`);
                     try {
                         fs.mkdirSync(cwd, { recursive: true });
-                        logDebug(`[startRepl] Successfully created working directory: ${cwd}`);
+                        logDebug(`[startPython] Successfully created working directory: ${cwd}`);
                     } catch (mkdirError) {
-                        logDebug(`[startRepl] Failed to create working directory: ${cwd}`);
+                        logDebug(`[startPython] Failed to create working directory: ${cwd}`);
                         outputChannel.show(true);
                         outputChannel.appendLine(`[ERROR] Failed to create working directory "${cwd}" for REPL. Please check your 'pylot.replWorkingDirectory' setting.`);
                         resolveOnce(false);
                         return;
                     }
                 } else {
-                    logDebug(`[startRepl] Working directory exists: ${cwd}`);
+                    logDebug(`[startPython] Working directory exists: ${cwd}`);
                 }
 
-                logDebug(`[startRepl] Spawning REPL process with cwd: ${cwd}`);
+                logDebug(`[startPython] Spawning REPL process with cwd: ${cwd}`);
                 const currentProcess = spawn(pythonPath, ['-u', '-c', replWrapperCode], {
                     env: env,
                     cwd: cwd
@@ -799,23 +800,23 @@ while True:
 
                 currentProcess.on('close', (code) => {
                     if (pythonRepl !== currentProcess) {
-                        logDebug(`[startRepl] Old REPL process closed with code: ${code}`);
+                        logDebug(`[startPython] Old REPL process closed with code: ${code}`);
                         return;
                     }
 
-                    logDebug(`[startRepl] REPL process closed with code: ${code}`);
+                    logDebug(`[startPython] REPL process closed with code: ${code}`);
                     pythonRepl = null;
                     replReady = false;
                     if (code === null) {
                         // null exit code typically means the process crashed during startup
-                        logDebug(`[startRepl] REPL process exited with code null - startup crash`);
+                        logDebug(`[startPython] REPL process exited with code null - startup crash`);
                         outputChannel.appendLine(`[ERROR] REPL process crashed during startup. This may indicate the Python executable is not working correctly or there was a startup error.`);
                         outputChannel.appendLine(`[ERROR] Working directory: ${cwd}`);
                         outputChannel.appendLine(`[ERROR] Python path: ${pythonPath}`);
                         resolveOnce(false);
                     } else if (code !== 0) {
                         // Non-zero exit code indicates an error
-                        logDebug(`[startRepl] REPL process exited with non-zero code ${code}`);
+                        logDebug(`[startPython] REPL process exited with non-zero code ${code}`);
                         outputChannel.appendLine(`[ERROR] REPL process exited with non-zero code ${code}. This may indicate the Python executable is not working correctly or there was a startup error.`);
                         resolveOnce(false);
                     } else {
@@ -825,34 +826,34 @@ while True:
 
                 currentProcess.on('error', (err: any) => {
                     if (pythonRepl !== currentProcess) {
-                        logDebug(`[startRepl] Old REPL process error: ${err.code || 'unknown'}`);
+                        logDebug(`[startPython] Old REPL process error: ${err.code || 'unknown'}`);
                         return;
                     }
 
-                    logDebug(`[startRepl] REPL process error: ${err.code || 'unknown'}, message: ${err.message}`);
+                    logDebug(`[startPython] REPL process error: ${err.code || 'unknown'}, message: ${err.message}`);
                     outputChannel.show(true);
                     const cwdMessage = `(Current working directory: ${cwd})`;
                     // Check if the error is about a missing file (ENOENT)
                     if (err.code === 'ENOENT') {
                         // ENOENT can mean either the Python executable doesn't exist OR the working directory doesn't exist
-                        logDebug('[startRepl] ENOENT error - file not found');
+                        logDebug('[startPython] ENOENT error - file not found');
                         outputChannel.appendLine(`[ERROR] Failed to start REPL.`);
                         if (pythonPath && !fs.existsSync(pythonPath)) {
-                            logDebug(`[startRepl] Python executable not found at: ${pythonPath}`);
+                            logDebug(`[startPython] Python executable not found at: ${pythonPath}`);
                             outputChannel.appendLine(`The Python executable was not found at "${pythonPath}".`);
                             outputChannel.appendLine(`Please check your Python interpreter path in the settings (pylot.pythonExecutable).`);
                         } else if (!fs.existsSync(cwd)) {
-                            logDebug(`[startRepl] Working directory does not exist: ${cwd}`);
+                            logDebug(`[startPython] Working directory does not exist: ${cwd}`);
                             outputChannel.appendLine(`The working directory could not be accessed: ${cwd}`);
                             outputChannel.appendLine(`The file may be unsaved without a workspace folder. Please save the file or ensure a valid workspace is open.`);
                         } else {
-                            logDebug(`[startRepl] ENOENT but both Python and cwd exist - unknown cause`);
+                            logDebug(`[startPython] ENOENT but both Python and cwd exist - unknown cause`);
                             outputChannel.appendLine(`Either the Python executable was not found at "${pythonPath}" or the working directory could not be accessed.`);
                             outputChannel.appendLine(`Please check your Python interpreter path and ensure the working directory exists.`);
                         }
                         outputChannel.appendLine(cwdMessage);
                     } else {
-                        logDebug(`[startRepl] Non-ENOENT error: ${err.code || 'unknown'}`);
+                        logDebug(`[startPython] Non-ENOENT error: ${err.code || 'unknown'}`);
                         outputChannel.appendLine(`[ERROR] Failed to start REPL. This might be due to an incorrect Python path or an invalid working directory.`);
                         outputChannel.appendLine(`Please check your Python interpreter settings and 'pylot.replWorkingDirectory'.`);
                         outputChannel.appendLine(`${err.message} ${cwdMessage}`);
@@ -868,16 +869,16 @@ while True:
                 }, REPL_STARTUP_TIMEOUT_MS);
 
             } catch (err: any) {
-                logDebug(`[startRepl] Exception in startRepl: ${err.message}`);
+                logDebug(`[startPython] Exception in startPython: ${err.message}`);
                 outputChannel.show(true);
                 const cwdMessage = `(Current working directory: ${cwd})`;
                 if (pythonPath && !fs.existsSync(pythonPath)) {
-                    logDebug(`[startRepl] Python executable not found at: ${pythonPath}`);
+                    logDebug(`[startPython] Python executable not found at: ${pythonPath}`);
                     outputChannel.appendLine(`[ERROR] Exception when attempting to start REPL.`);
                     outputChannel.appendLine(`The Python executable was not found at "${pythonPath}".`);
                     outputChannel.appendLine(`Please check your Python interpreter path in the settings (pylot.pythonExecutable).`);
                 } else {
-                    logDebug(`[startRepl] Exception but Python executable exists - cwd issue?`);
+                    logDebug(`[startPython] Exception but Python executable exists - cwd issue?`);
                     outputChannel.appendLine(`[ERROR] Exception when attempting to start REPL. This might be due to an incorrect Python path or an invalid working directory.`);
                     outputChannel.appendLine(`Please check your Python interpreter settings and 'pylot.replWorkingDirectory'.`);
                 }
@@ -1170,7 +1171,7 @@ while True:
             outputChannel.clear();
             outputChannel.show(true);
 
-            const success = await startRepl(pythonPath, editor.document.uri);
+            const success = await startPython(pythonPath, editor.document.uri);
             if (!success) {
                 // The detailed error message is already shown in the output channel
                 vscode.window.showErrorMessage('Pylot: Failed to start Python REPL. Please check the "Pylot" output panel for details and review your Python interpreter settings and `pylot.replWorkingDirectory`.');
@@ -1534,7 +1535,7 @@ while True:
 
     // ── Command registrations ───────────────────────────────────────────
 
-    const restartReplCommand = vscode.commands.registerCommand('pylot.restartRepl', async () => {
+    const restartReplCommand = vscode.commands.registerCommand('pylot.startPython', async () => {
         removeAllColorMarks();
         stopRepl();
         const pythonPath = await getPythonPath();
@@ -1547,12 +1548,12 @@ while True:
         const editor = vscode.window.activeTextEditor;
         const config = vscode.workspace.getConfiguration('pylot');
         debugMode = config.get<boolean>('debugMode', false);
-        const success = await startRepl(pythonPath, editor?.document.uri);
+        const success = await startPython(pythonPath, editor?.document.uri);
         if (success) {
             outputChannel.appendLine('[Pylot: Python ready]');
             vscode.window.showInformationMessage('Pylot: Python restarted successfully.');
         } else {
-            vscode.window.showErrorMessage('Pylot: Failed to restart Python REPL. Please check the output channel for details and review your Python interpreter settings and `pylot.replWorkingDirectory`.');
+            vscode.window.showErrorMessage('Pylot: Failed to restart the Python session. Please check the output channel for details or review your Python interpreter settings and the `pylot.replWorkingDirectory` setting.');
         }
     });
 
@@ -1618,7 +1619,7 @@ while True:
             outputChannel.clear();
             outputChannel.show(true);
 
-            const success = await startRepl(pythonPath, editor.document.uri);
+            const success = await startPython(pythonPath, editor.document.uri);
             if (!success) {
                 logDebug('[evaluateExpression] Failed to start REPL');
                 const errorMsg = editor.document.isUntitled

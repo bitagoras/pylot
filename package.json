@@ -2,7 +2,7 @@
     "name": "pylot",
     "displayName": "Pylot - Python code runner",
     "description": "Executes lines of Python code with visualized smart selection.",
-    "version": "1.2.4",
+    "version": "1.2.5",
     "publisher": "bitagoras",
     "repository": "https://github.com/bitagoras/pylot",
     "engines": {
@@ -83,7 +83,7 @@
                 "title": "Pylot: Execute Whole Python Program"
             },
             {
-                "command": "pylot.restartPython",
+                "command": "pylot.startPython",
                 "title": "Pylot: Restart Python Session"
             },
             {
@@ -107,32 +107,32 @@
             {
                 "command": "pylot.clearOutput",
                 "key": "ctrl+shift+c",
-                "when": "editorTextFocus && editorLangId == python"
+                "when": "pylotActive && editorTextFocus && editorLangId == python"
             },
             {
                 "command": "pylot.executeSelectedPython",
                 "key": "shift+enter",
-                "when": "editorTextFocus && editorLangId == python && !findInputFocussed && !replaceInputFocussed && !suggestWidgetVisible"
+                "when": "pylotActive && editorTextFocus && editorLangId == python && !isCompositeNotebook && !jupyter.ownsSelection && !notebookEditorFocused && !findInputFocussed && !replaceInputFocussed && !suggestWidgetVisible"
             },
             {
                 "command": "pylot.evaluateExpression",
                 "key": "ctrl+shift+space",
-                "when": "editorTextFocus && editorLangId == python"
+                "when": "pylotActive && editorTextFocus && editorLangId == python"
             },
             {
                 "command": "pylot.executeSelectedPythonNoMove",
                 "key": "shift+ctrl+enter",
-                "when": "editorTextFocus && editorLangId == python && !findInputFocussed && !replaceInputFocussed && !suggestWidgetVisible"
+                "when": "pylotActive && editorTextFocus && editorLangId == python && !isCompositeNotebook && !jupyter.ownsSelection && !notebookEditorFocused && !findInputFocussed && !replaceInputFocussed && !suggestWidgetVisible"
             },
             {
                 "command": "pylot.executeWholeProgram",
                 "key": "shift+ctrl+alt+enter",
-                "when": "editorTextFocus && editorLangId == python && !findInputFocussed && !replaceInputFocussed && !suggestWidgetVisible"
+                "when": "pylotActive && editorTextFocus && editorLangId == python && !isCompositeNotebook && !jupyter.ownsSelection && !notebookEditorFocused && !findInputFocussed && !replaceInputFocussed && !suggestWidgetVisible"
             },
             {
                 "command": "pylot.interruptExecution",
                 "key": "ctrl+alt+c",
-                "when": "editorTextFocus && editorLangId == python"
+                "when": "pylotActive && editorTextFocus && editorLangId == python"
             }
         ]
     },

@@ -1,5 +1,5 @@
 # Pylot – Python code runner
-A VS Code extension that runs Python code directly from the editor using smart selection and visual line markers. It turns your editor into an interactive Python environment and lets you write, run and evaluate Python code at the same time and in one place. Use it as a lightweight and flexible alternative to data science notebooks.
+A VS Code extension that runs Python code directly from the editor using smart selection and visual line markers. It turns your editor into an interactive Python environment to write, run and evaluate Python code at the same time and in one place. Use it as a lightweight and flexible alternative to data science notebooks.
 
 ## Features
 
@@ -44,18 +44,18 @@ Pylot provides the following settings to customize its behavior:
 - `pylot.matplotlibEventHandler`: Controls when the Matplotlib non-blocking event handler is injected into the Python session (default: `auto`).
 - `pylot.executionMarkerStyle`: Configures the visual style of execution state markers. Options are `gutter`, `border` or `off` (default: `gutter`).
 
+## Requirements
+
+- [Python extension](https://marketplace.visualstudio.com/items?itemName=ms-python.python) (`ms-python.python`) – installed automatically as a dependency.
+
 ## Installation
 
 1. Open **Extensions** in VS Code (`Ctrl+Shift+X`).
 2. Search for **Pylot** and click **Install**.
 3. The required Python extension (`ms-python.python`) will be installed automatically.
-4. If other Python extensions have claimed `Shift+Enter`, `Ctrl+Shift+Enter` or `Shift+Ctrl+Alt+Enter`, you may need to remove those bindings:
+4. If other Python extensions have claimed `Shift+Enter`, `Ctrl+Shift+Enter` or `Shift+Ctrl+Alt+Enter` in precedence, you may need to remove those bindings:
    - Open the command palette (`Ctrl+Shift+P`) → **Preferences: Open Keyboard Shortcuts**.
    - Search for the conflicting shortcut and remove or reassign it.
-
-## Requirements
-
-- [Python extension](https://marketplace.visualstudio.com/items?itemName=ms-python.python) (`ms-python.python`) – installed automatically as a dependency.
 
 ## License
 
