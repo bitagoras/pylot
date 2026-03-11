@@ -2,6 +2,11 @@
 
 All notable changes to the **Pylot** extension will be documented in this file.
 
+## [1.2.6] - 2026-03-11
+
+### Improvements
+- **Error Marker Style**: Updated the red error gutter marker to feature a continuous, subtle sine wave instead of a straight line.
+
 ## [1.2.5] - 2026-03-10
 
 ### Bug Fixes

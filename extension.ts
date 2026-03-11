@@ -114,7 +114,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     const errorSvg = `data:image/svg+xml;utf8,
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 10" preserveAspectRatio="none">
-            <rect x="2" y="0" width="0.75" height="10" fill="rgb(255, 0, 0)" fill-opacity="0.8" />
+            <path d="M 2.5 0 Q 3 2.5 2.5 5 T 2.5 10" fill="none" stroke="rgb(255, 0, 0)" stroke-width="0.75" stroke-opacity="0.8" />
         </svg>`;
 
     const gutterRunningDecoration = vscode.window.createTextEditorDecorationType({
