@@ -2,6 +2,16 @@
 
 All notable changes to the **Pylot** extension will be documented in this file.
 
+## [1.3.0] - 2026-03-22
+
+### New Features
+- **MCP Server Bridge**: Added a built-in Model Context Protocol (MCP) server that lets AI coding assistants (Kilocode, Continue, etc.) interact with the Pylot REPL directly. Enable it with the new `pylot.mcpServer.enabled` setting. The bundled script `mcp/pylot-mcp-server.js` exposes five AI-callable tools: `pylot_append_and_execute`, `pylot_execute_range`, `pylot_get_status`, `pylot_evaluate_expression`, and `pylot_get_output`.
+- **`pylot.mcpServer.enabled`**: New setting to start a localhost HTTP IPC server that the MCP script connects to. Disabled by default.
+- **`pylot.mcpServer.port`**: New setting to configure the IPC server port (default: `7822`). Change it if the port is already in use.
+
+### Improvements
+- **Running Marker Style**: Refined the orange running gutter marker with a flowing dashed line and a synchronized breathing opacity effect.
+
 ## [1.2.6] - 2026-03-11
 
 ### Improvements

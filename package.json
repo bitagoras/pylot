@@ -2,7 +2,7 @@
     "name": "pylot",
     "displayName": "Pylot - Python code runner",
     "description": "Executes lines of Python code with visualized smart selection.",
-    "version": "1.2.6",
+    "version": "1.3.0",
     "publisher": "bitagoras",
     "repository": "https://github.com/bitagoras/pylot",
     "engines": {
@@ -66,6 +66,18 @@
                     "type": "boolean",
                     "default": false,
                     "description": "Enables detailed debug output in the Pylot output panel to help diagnose issues with code execution. (Requires Python restart to take effect)"
+                },
+                "pylot.mcpServer.enabled": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Start a local HTTP server so external MCP clients (e.g. Kilocode) can call the Pylot REPL via the bundled MCP server script (mcp/pylot-mcp-server.js). Requires a window reload to take effect."
+                },
+                "pylot.mcpServer.port": {
+                    "type": "integer",
+                    "default": 7822,
+                    "minimum": 1024,
+                    "maximum": 65535,
+                    "description": "Localhost port for the Pylot MCP HTTP IPC server. The MCP server script (mcp/pylot-mcp-server.js) must be given the same port number as its first argument. Requires a window reload to take effect."
                 }
             }
         },
@@ -101,6 +113,26 @@
             {
                 "command": "pylot.interruptExecution",
                 "title": "Pylot: Interrupt Execution"
+            },
+            {
+                "command": "pylot.agent.appendAndExecute",
+                "title": "Pylot Agent: Append and Execute Code"
+            },
+            {
+                "command": "pylot.agent.executeRange",
+                "title": "Pylot Agent: Execute Code in Range"
+            },
+            {
+                "command": "pylot.agent.getExecutionStatus",
+                "title": "Pylot Agent: Get Execution Status"
+            },
+            {
+                "command": "pylot.agent.evaluateExpression",
+                "title": "Pylot Agent: Evaluate Expression"
+            },
+            {
+                "command": "pylot.agent.getOutput",
+                "title": "Pylot Agent: Get execution Output"
             }
         ],
         "keybindings": [

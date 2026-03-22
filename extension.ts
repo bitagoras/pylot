@@ -24,6 +24,7 @@ import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
+import * as http from 'http';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -62,6 +63,8 @@ function logDebug(message: string): void {
 let runningAnimTimer: ReturnType<typeof setInterval> | null = null;
 let pendingOutputShow = false;
 let replStartPromise: Promise<boolean> | null = null;
+let agentOutputBuffer: string = '';
+let mcpHttpServer: http.Server | null = null;
 
 // ── Timeout constants ───────────────────────────────────────────────────────
 
@@ -96,15 +99,25 @@ export function activate(context: vscode.ExtensionContext) {
 
     const runningSvg = `data:image/svg+xml;utf8,
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 10" preserveAspectRatio="none">
-            <rect x="2" y="0" width="0.75" height="10" fill="rgb(255, 165, 0)">
-                <animate attributeName="fill-opacity"
-                         values="0.5;1;0.5"
-                         dur="2s"
-                         repeatCount="indefinite"
-                         calcMode="spline"
-                         keyTimes="0;0.5;1"
-                         keySplines="0.42 0 0.58 1;0.42 0 0.58 1" />
-            </rect>
+        <g>
+            <animate attributeName="opacity"
+                     values="0.6;1;0.6"
+                     dur="2s"
+                     repeatCount="indefinite"
+                     calcMode="spline"
+                     keyTimes="0;0.5;1"
+                     keySplines="0.42 0 0.58 1;0.42 0 0.58 1" />
+            <!-- Background stripe -->
+            <rect x="2" y="0" width="0.75" height="10" fill="rgb(255,140,0)" />
+            <!-- Animated dashes -->
+            <line x1="2.375" y1="0" x2="2.375" y2="20"
+                    stroke="rgb(255,200,50)" stroke-width="0.75"
+                    stroke-dasharray="5 5">
+                <animate attributeName="stroke-dashoffset"
+                        from="10" to="0"
+                        dur="1s" repeatCount="indefinite"/>
+            </line>
+        </g>
         </svg>`;
 
     const executedSvg = `data:image/svg+xml;utf8,
@@ -709,6 +722,7 @@ while True:
                                     }
                                     outputChannel.append(userOutput);
                                 }
+                                agentOutputBuffer += userOutput;
                             }
                             const jsonStr = line.substring(markerIndex + '<<<PYLOT_JSON>>>'.length).trim();
                             try {
@@ -784,6 +798,7 @@ while True:
                                 }
                                 outputChannel.append(line);
                             }
+                            agentOutputBuffer += line;
                         }
                     }
                 });
@@ -795,6 +810,7 @@ while True:
                     if (stderrText) {
                         outputChannel.show(true);
                         outputChannel.appendLine(`[Python stderr] ${stderrText}`);
+                        agentOutputBuffer += `[Python stderr] ${stderrText}\n`;
                     }
                 });
 
@@ -1042,6 +1058,7 @@ while True:
                 resolve({ success: execSuccess, executed: true });
             };
 
+            agentOutputBuffer = ''; // Clear buffer before new execution
             pythonRepl?.stdin?.write(JSON.stringify(command) + '\n');
         });
     }
@@ -1896,6 +1913,153 @@ while True:
         }
     });
 
+    // ── AI Agent API Commands ───────────────────────────────────────────
+
+    const agentAppendAndExecuteCommand = vscode.commands.registerCommand('pylot.agent.appendAndExecute', async (args?: { code: string }) => {
+        if (!args || typeof args.code !== 'string' || !args.code.trim()) {
+            return { success: false, output: 'Error: code argument is required and must be a non-empty string.' };
+        }
+
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            return { success: false, output: 'Error: No active text editor.' };
+        }
+        if (editor.document.languageId !== 'python') {
+            return { success: false, output: 'Error: Active file is not a Python file.' };
+        }
+
+        // Append line to the bottom
+        const lastLine = editor.document.lineCount - 1;
+        const lastLineContent = editor.document.lineAt(lastLine).text;
+        const needsNewline = lastLineContent.length > 0 && !lastLineContent.endsWith('\n');
+
+        let codeToAppend = args.code;
+        if (needsNewline) {
+            codeToAppend = '\n' + codeToAppend;
+        }
+        // Ensure the appended code ends with a newline
+        if (!codeToAppend.endsWith('\n')) {
+            codeToAppend += '\n';
+        }
+
+        await editor.edit(editBuilder => {
+            editBuilder.insert(new vscode.Position(lastLine, lastLineContent.length), codeToAppend);
+        });
+
+        // Determine the inserted lines
+        const newTotalLines = editor.document.lineCount;
+        const insertedLinesCount = codeToAppend.split('\n').length - 1;
+        const startLine = Math.max(0, newTotalLines - insertedLinesCount - 1); // rough start line
+        const endLine = newTotalLines - 1;
+
+        // Create selection for the new code
+        const startPos = new vscode.Position(startLine, editor.document.lineAt(startLine).firstNonWhitespaceCharacterIndex);
+        const endPos = new vscode.Position(endLine, editor.document.lineAt(endLine).text.length);
+
+        // Temporarily set selection
+        const originalSelection = editor.selection;
+        editor.selection = new vscode.Selection(startPos, endPos);
+        editor.revealRange(editor.selection);
+
+        // Execute
+        await executeSelectedPython(editor, false);
+
+        // Restore selection
+        editor.selection = originalSelection;
+        editor.revealRange(editor.selection);
+
+        return { success: lastExpressionResult !== '' || currentExecutionCallback === null /* Hacky way to guess success */, output: agentOutputBuffer };
+    });
+
+    const agentExecuteRangeCommand = vscode.commands.registerCommand('pylot.agent.executeRange', async (args?: { startLine: number, endLine: number }) => {
+        if (!args || typeof args.startLine !== 'number' || typeof args.endLine !== 'number') {
+            return { success: false, output: 'Error: startLine and endLine arguments are required and must be numbers (0-indexed).' };
+        }
+
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            return { success: false, output: 'Error: No active text editor.' };
+        }
+        if (editor.document.languageId !== 'python') {
+            return { success: false, output: 'Error: Active file is not a Python file.' };
+        }
+
+        // Bound check
+        const startLine = Math.max(0, args.startLine);
+        const endLine = Math.min(editor.document.lineCount - 1, args.endLine);
+
+        // Create selection
+        const startPos = new vscode.Position(startLine, editor.document.lineAt(startLine).firstNonWhitespaceCharacterIndex);
+        const endPos = new vscode.Position(endLine, editor.document.lineAt(endLine).text.length);
+
+        const originalSelection = editor.selection;
+        editor.selection = new vscode.Selection(startPos, endPos);
+        editor.revealRange(editor.selection);
+
+        await executeSelectedPython(editor, false);
+
+        editor.selection = originalSelection;
+        editor.revealRange(editor.selection);
+
+        return { success: currentExecutionCallback === null, output: agentOutputBuffer };
+    });
+
+    const agentGetExecutionStatusCommand = vscode.commands.registerCommand('pylot.agent.getExecutionStatus', () => {
+        return { ready: replReady, running: currentExecutionCallback !== null };
+    });
+
+    // Alias evaluateExpression, but parse args to support agent execution
+    const agentEvaluateExpressionCommand = vscode.commands.registerCommand('pylot.agent.evaluateExpression', async (args?: { expression: string }) => {
+        if (!args || typeof args.expression !== 'string' || !args.expression.trim()) {
+            return { success: false, result: 'Error: expression argument is required.' };
+        }
+
+        if (!pythonRepl || !replReady) {
+            return { success: false, result: 'Error: Python REPL is not active.' };
+        }
+
+        const isExpression = await isValidPythonExpression(args.expression);
+        if (!isExpression) {
+            return { success: false, result: 'Error: Invalid Python expression.' };
+        }
+
+        const editor = vscode.window.activeTextEditor;
+        const resolvedEvalCwd = editor?.document.uri.scheme === 'file'
+            ? resolveWorkingDirectory(editor.document.uri)
+            : undefined;
+
+        const command = {
+            action: 'evaluate_async',
+            code: JSON.stringify(args.expression),
+            filename: editor?.document.fileName || '<agent>',
+            start_line: 1,
+            ...(resolvedEvalCwd ? { cwd: resolvedEvalCwd } : {})
+        };
+
+        const result = await new Promise<{ success: boolean; executed: boolean }>((resolve) => {
+            asyncExpressionResultCallback = (success: boolean, resultText: string, type: string, shape: string, len: string) => {
+                lastExpressionResult = resultText;
+                lastExpressionType = type;
+                lastExpressionShape = shape;
+                lastExpressionLen = len;
+                resolve({ success: success, executed: true });
+            };
+            pythonRepl?.stdin?.write(JSON.stringify(command) + '\n');
+        });
+
+        return {
+            success: result.success,
+            result: lastExpressionResult,
+            type: lastExpressionType,
+            shape: lastExpressionShape,
+            len: lastExpressionLen
+        };
+    });
+
+    const agentGetOutputCommand = vscode.commands.registerCommand('pylot.agent.getOutput', () => {
+        return agentOutputBuffer;
+    });
+
     context.subscriptions.push(hoverProvider);
     context.subscriptions.push(executeCommand);
     context.subscriptions.push(executeNoMoveCommand);
@@ -1907,6 +2071,101 @@ while True:
     context.subscriptions.push(interruptCommand);
     context.subscriptions.push(openFileCommand);
     context.subscriptions.push(linkProvider);
+
+    // Agent Subscriptions
+    context.subscriptions.push(agentAppendAndExecuteCommand);
+    context.subscriptions.push(agentExecuteRangeCommand);
+    context.subscriptions.push(agentGetExecutionStatusCommand);
+    context.subscriptions.push(agentEvaluateExpressionCommand);
+    context.subscriptions.push(agentGetOutputCommand);
+
+    // ── MCP HTTP IPC server ─────────────────────────────────────────────
+
+    /** Allowed command prefixes that the MCP HTTP server may execute. */
+    const ALLOWED_MCP_COMMANDS = [
+        'pylot.agent.appendAndExecute',
+        'pylot.agent.executeRange',
+        'pylot.agent.getExecutionStatus',
+        'pylot.agent.evaluateExpression',
+        'pylot.agent.getOutput',
+    ];
+
+    function startMcpHttpServer(port: number) {
+        if (mcpHttpServer) { return; }
+
+        mcpHttpServer = http.createServer((req, res) => {
+            if (req.method !== 'POST') {
+                res.writeHead(405);
+                res.end(JSON.stringify({ error: 'Method not allowed' }));
+                return;
+            }
+
+            let body = '';
+            req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+            req.on('end', async () => {
+                try {
+                    const { command, args } = JSON.parse(body);
+
+                    if (!ALLOWED_MCP_COMMANDS.includes(command)) {
+                        res.writeHead(403, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: `Command not allowed: ${command}` }));
+                        return;
+                    }
+
+                    const result = await vscode.commands.executeCommand(command, args);
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ result }));
+                } catch (e: any) {
+                    res.writeHead(500, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: e?.message || 'Internal error' }));
+                }
+            });
+        });
+
+        mcpHttpServer.on('error', (err: any) => {
+            outputChannel.appendLine(`[Pylot MCP] HTTP server error: ${err.message}`);
+            if (err.code === 'EADDRINUSE') {
+                outputChannel.appendLine(`[Pylot MCP] Port ${port} is already in use. Change pylot.mcpServer.port in settings.`);
+            }
+        });
+
+        mcpHttpServer.listen(port, '127.0.0.1', () => {
+            outputChannel.appendLine(`[Pylot MCP] HTTP IPC server listening on http://127.0.0.1:${port}`);
+        });
+    }
+
+    function stopMcpHttpServer() {
+        if (mcpHttpServer) {
+            mcpHttpServer.close();
+            mcpHttpServer = null;
+            outputChannel.appendLine('[Pylot MCP] HTTP IPC server stopped.');
+        }
+    }
+
+    // Start MCP server if enabled
+    const initialMcpConfig = vscode.workspace.getConfiguration('pylot');
+    if (initialMcpConfig.get<boolean>('mcpServer.enabled', false)) {
+        const port = initialMcpConfig.get<number>('mcpServer.port', 7822);
+        startMcpHttpServer(port);
+    }
+
+    // React to settings changes
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeConfiguration(e => {
+            if (e.affectsConfiguration('pylot.mcpServer.enabled') || e.affectsConfiguration('pylot.mcpServer.port')) {
+                const cfg = vscode.workspace.getConfiguration('pylot');
+                const enabled = cfg.get<boolean>('mcpServer.enabled', false);
+                stopMcpHttpServer();
+                if (enabled) {
+                    const port = cfg.get<number>('mcpServer.port', 7822);
+                    startMcpHttpServer(port);
+                }
+            }
+            if (e.affectsConfiguration('pylot.debugMode')) {
+                debugMode = vscode.workspace.getConfiguration('pylot').get<boolean>('debugMode', false);
+            }
+        })
+    );
 }
 
 // ── Deactivation ────────────────────────────────────────────────────────────
@@ -1917,5 +2176,9 @@ export function deactivate() {
     }
     if (pythonRepl) {
         pythonRepl.kill();
+    }
+    if (mcpHttpServer) {
+        mcpHttpServer.close();
+        mcpHttpServer = null;
     }
 }
