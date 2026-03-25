@@ -13,7 +13,7 @@ A VS Code extension that runs Python code directly from the editor using smart s
 - **Pure output window** – Output is displayed in a dedicated panel, without repeating the code.
 - **Variable inspection** – Hover over any variable to see its type and current value in a tooltip, even while the code is running. It also shows the length of sized objects and the shape of NumPy arrays.
 - **Expression evaluation** – Pressing `Ctrl+Shift+Space` evaluates any selected expression or variable at the cursor and shows the result in a tooltip.
-- **Cell execution** – `Shift+Enter` at a cell comment, which starts with `#%%`, executes the entire cell until the next cell comment or the end of the file.
+- **Cell execution** – `Shift+Enter` at a cell comment, which starts with `#%`, executes the entire cell until the next cell comment or the end of the file.
 - **Execution interruption** – Easily interrupt long-running or stuck code using `Ctrl+Alt+C` without losing your Python state.
 - **Matplotlib support** – Keeps multiple Matplotlib plot windows open and interactive while you continue working.
 - **AI agent integration** – Expose the REPL to AI coding assistants (Kilocode, Continue, etc.) via a built-in MCP server bridge.
@@ -44,55 +44,10 @@ Pylot provides the following settings to customize its behavior:
 - `pylot.replWorkingDirectory`: Ordered list of candidate working directories for the Python session. Each entry is tried from left to right; the first one that resolves to an existing directory is used. Supports VS Code variables: `${fileDirname}` (directory of the active file), `${workspaceFolder}`, `${userHome}`, and absolute paths. Default: `["${fileDirname}", "${workspaceFolder}", "${userHome}"]`.
 - `pylot.matplotlibEventHandler`: Controls when the Matplotlib non-blocking event handler is injected into the Python session (default: `auto`).
 - `pylot.executionMarkerStyle`: Configures the visual style of execution state markers. Options are `gutter`, `border` or `off` (default: `gutter`).
-- `pylot.mcpServer.enabled`: Start a localhost HTTP IPC server so the bundled MCP script can relay AI tool calls to the Pylot REPL. Disabled by default.
-- `pylot.mcpServer.port`: Port for the MCP IPC server (default: `7822`). Must match the port argument passed to `mcp/pylot-mcp-server.js`.
-
-## AI Agent Integration
-
-Pylot ships a zero-dependency MCP server script (`mcp/pylot-mcp-server.js`) that lets AI coding assistants control the Python REPL.
-
-### Setup
-
-1. Enable the IPC server in VS Code settings:
-   ```json
-   "pylot.mcpServer.enabled": true,
-   "pylot.mcpServer.port": 7822
-   ```
-2. Point your AI assistant at the MCP script. Examples:
-
-   **Kilocode** – add to VS Code `settings.json`:
-   ```json
-   "kilo-code.mcpServers": {
-     "pylot": {
-       "command": "node",
-       "args": ["/path/to/pylot/mcp/pylot-mcp-server.js", "7822"],
-       "disabled": false,
-       "alwaysAllow": []
-     }
-   }
-   ```
-
-   **Continue** – add to your MCP config YAML:
-   ```yaml
-   mcpServers:
-     - name: Pylot
-       command: node
-       args:
-         - /path/to/pylot/mcp/pylot-mcp-server.js
-         - "7822"
-   ```
-
-3. Copy `.kilocodemodes` from the extension folder to your project root for a pre-configured Kilocode **Pylot** mode.
-
-### Available MCP Tools
-
-| Tool | Description |
-|---|---|
-| `pylot_append_and_execute` | Append Python code to the editor and run it in the REPL |
-| `pylot_execute_range` | Re-execute a line range already in the editor (0-indexed) |
-| `pylot_get_status` | Check if the REPL is ready and whether it is currently running |
-| `pylot_evaluate_expression` | Evaluate a Python expression without modifying the document |
-| `pylot_get_output` | Retrieve stdout/stderr from the most recent execution |
+- `pylot.debug.python`: Enables detailed debug output for the Python session.
+- `pylot.debug.mcpServer`: Enables detailed debug output for the internal MCP server.
+- `pylot.mcpServer.enabled`: Start an internal MCP server so AI coding assistants (e.g. Kilocode, Continue) can call Pylot tools directly via the SSE (Server-Sent Events) transport.
+- `pylot.mcpServer.port`: Port for the MCP server (default: `7822`).
 
 ## Requirements
 
@@ -106,6 +61,30 @@ Pylot ships a zero-dependency MCP server script (`mcp/pylot-mcp-server.js`) that
 4. If other Python extensions have claimed `Shift+Enter`, `Ctrl+Shift+Enter` or `Shift+Ctrl+Alt+Enter` in precedence, you may need to remove those bindings:
    - Open the command palette (`Ctrl+Shift+P`) → **Preferences: Open Keyboard Shortcuts**.
    - Search for the conflicting shortcut and remove or reassign it.
+
+## AI Agent Integration
+
+Pylot includes an internal MCP (Model Context Protocol) server that lets AI coding assistants control the Python REPL without any external dependencies.
+
+### Available MCP Tools
+
+| Tool | Description |
+|---|---|
+| `pylot_append_and_execute` | Append Python code to the editor and run it in the REPL |
+| `pylot_execute_range` | Re-execute a line range already in the editor (0-indexed) |
+| `pylot_get_status` | Check if the REPL is ready and whether it is currently running |
+| `pylot_evaluate_expression` | Evaluate a Python expression without modifying the document |
+| `pylot_get_output` | Retrieve stdout/stderr from the most recent execution |
+| `pylot_read_file` | Read active editor's content (with optional line numbers) |
+| `pylot_edit_code` | Precise search-and-replace in the active editor |
+| `pylot_restart_repl` | Clear the REPL memory and restart the session |
+| `pylot_interrupt_execution` | Manually stop a long-running execution (KeyboardInterrupt) |
+
+### Setup
+
+1. Enable the MCP server in VS Code settings (`pylot.mcpServer.enabled`).
+2. Connect your AI assistant via the **SSE (Server-Sent Events) transport** using this URL:
+   `http://localhost:7822/sse`
 
 ## License
 

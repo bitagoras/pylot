@@ -47,17 +47,25 @@ let lastExpressionResult: string = '';
 let lastExpressionType: string = '';
 let lastExpressionShape: string = '';
 let lastExpressionLen: string = '';
+let currentPythonVersion: string = '';
 let asyncExpressionResultCallback: ((success: boolean, resultText: string, type: string, shape: string, len: string) => void) | null = null;
 let debugMode = false;
+let mcpDebugMode = false;
 let silentEvaluation = false;
 
 /** Tracks the resolved working directory most recently applied to the REPL process. */
 let currentReplCwd: string | undefined = undefined;
 
-/** Log a message to the output channel if debug mode is enabled. */
 function logDebug(message: string): void {
     if (debugMode) {
         outputChannel.appendLine(`[Pylot DEBUG] ${message}`);
+    }
+}
+
+/** Log a message to the output channel if MCP debug mode is enabled. */
+function logMcpDebug(message: string): void {
+    if (mcpDebugMode) {
+        outputChannel.appendLine(`[Pylot MCP DEBUG] ${message}`);
     }
 }
 let runningAnimTimer: ReturnType<typeof setInterval> | null = null;
@@ -85,9 +93,10 @@ export function activate(context: vscode.ExtensionContext) {
 
     outputChannel = vscode.window.createOutputChannel("pylot");
 
-    // Initialize debug mode from settings
+    // Initialize debug modes from settings
     const config = vscode.workspace.getConfiguration('pylot');
-    debugMode = config.get<boolean>('debugMode', false);
+    debugMode = config.get<boolean>('debug.python', false) || config.get<boolean>('debugMode', false);
+    mcpDebugMode = config.get<boolean>('debug.mcpServer', false) || config.get<boolean>('mcpServer.debugMode', false);
 
     // ── Line decorations (left-border style) ─────────────────────────────
     //
@@ -403,7 +412,7 @@ def send_msg(msg_type, **kwargs):
         real_stdout.write(f"<<<PYLOT_JSON>>>{json.dumps(kwargs)}\\n")
         real_stdout.flush()
 
-send_msg('ready')
+send_msg('ready', version=sys.version.split()[0])
 
 def print_exception_with_links(e):
     exc_type, exc_value, exc_tb = sys.exc_info()
@@ -731,6 +740,7 @@ while True:
                                 switch (msg.type) {
                                     case 'ready':
                                         replReady = true;
+                                        currentPythonVersion = msg.version || '';
                                         resolveOnce(true);
                                         break;
 
@@ -1215,12 +1225,12 @@ while True:
 
         if (!wholeProgram && initialStartLine === initialEndLine) {
             const startLineText = editor.document.lineAt(initialStartLine).text.trimLeft();
-            if (startLineText.startsWith('#%%')) {
+            if (startLineText.startsWith('#%')) {
                 isCellExecution = true;
                 let nextCellLine = -1;
                 let line = initialStartLine + 1;
                 while (line < editor.document.lineCount) {
-                    if (editor.document.lineAt(line).text.trimLeft().startsWith('#%%')) {
+                    if (editor.document.lineAt(line).text.trimLeft().startsWith('#%')) {
                         nextCellLine = line;
                         break;
                     }
@@ -1567,7 +1577,10 @@ while True:
         debugMode = config.get<boolean>('debugMode', false);
         const success = await startPython(pythonPath, editor?.document.uri);
         if (success) {
-            outputChannel.appendLine('[Pylot: Python ready]');
+            outputChannel.clear();
+            if (debugMode) {
+                outputChannel.appendLine(`[Pylot: Python ${currentPythonVersion} ready]`);
+            }
             vscode.window.showInformationMessage('Pylot: Python restarted successfully.');
         } else {
             vscode.window.showErrorMessage('Pylot: Failed to restart the Python session. Please check the output channel for details or review your Python interpreter settings and the `pylot.replWorkingDirectory` setting.');
@@ -2060,6 +2073,73 @@ while True:
         return agentOutputBuffer;
     });
 
+    const agentReadFileCommand = vscode.commands.registerCommand('pylot.agent.readFile', async (args?: { include_line_numbers: boolean }) => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            return 'Error: No active text editor.';
+        }
+
+        const document = editor.document;
+        const includeLineNumbers = args?.include_line_numbers ?? false;
+
+        if (!includeLineNumbers) {
+            return document.getText();
+        }
+
+        let result = '';
+        for (let i = 0; i < document.lineCount; i++) {
+            result += `${i}: ${document.lineAt(i).text}\n`;
+        }
+        return result;
+    });
+
+    const agentEditCodeCommand = vscode.commands.registerCommand('pylot.agent.editCode', async (args?: { search_string: string, replace_string: string }) => {
+        if (!args || typeof args.search_string !== 'string' || typeof args.replace_string !== 'string') {
+            return { success: false, output: 'Error: search_string and replace_string are required.' };
+        }
+
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            return { success: false, output: 'Error: No active text editor.' };
+        }
+
+        const document = editor.document;
+        const fullText = document.getText();
+        const searchString = args.search_string;
+        const replaceString = args.replace_string;
+
+        if (!fullText.includes(searchString)) {
+            return { success: false, output: 'Error: search_string not found in file. Please read the file again to check the exact indentation and content.' };
+        }
+
+        // We use editor.edit to handle the replacement within VS Code's undo/redo stack
+        const success = await editor.edit(editBuilder => {
+            let index = fullText.indexOf(searchString);
+            while (index !== -1) {
+                const startPos = document.positionAt(index);
+                const endPos = document.positionAt(index + searchString.length);
+                editBuilder.replace(new vscode.Range(startPos, endPos), replaceString);
+                // If we only want to replace the FIRST occurrence, we could break here.
+                // But usually LLMs provide a unique enough search string.
+                // The prompt says "exact search and replace", usually implying one or all.
+                // Let's replace all occurrences to be safe if they are identical.
+                index = fullText.indexOf(searchString, index + searchString.length);
+            }
+        });
+
+        return { success, output: success ? 'Code updated successfully.' : 'Error: Failed to apply edits.' };
+    });
+
+    const agentRestartReplCommand = vscode.commands.registerCommand('pylot.agent.restartRepl', async () => {
+        await vscode.commands.executeCommand('pylot.startPython');
+        return { success: true, output: 'REPL restarted.' };
+    });
+
+    const agentInterruptExecutionCommand = vscode.commands.registerCommand('pylot.agent.interruptExecution', async () => {
+        await vscode.commands.executeCommand('pylot.interruptExecution');
+        return { success: true, output: 'Sent KeyboardInterrupt to REPL.' };
+    });
+
     context.subscriptions.push(hoverProvider);
     context.subscriptions.push(executeCommand);
     context.subscriptions.push(executeNoMoveCommand);
@@ -2078,59 +2158,313 @@ while True:
     context.subscriptions.push(agentGetExecutionStatusCommand);
     context.subscriptions.push(agentEvaluateExpressionCommand);
     context.subscriptions.push(agentGetOutputCommand);
+    context.subscriptions.push(agentReadFileCommand);
+    context.subscriptions.push(agentEditCodeCommand);
+    context.subscriptions.push(agentRestartReplCommand);
+    context.subscriptions.push(agentInterruptExecutionCommand);
 
-    // ── MCP HTTP IPC server ─────────────────────────────────────────────
+    // ── MCP HTTP IPC server (SSE Transport) ───────────────────────────────────
 
-    /** Allowed command prefixes that the MCP HTTP server may execute. */
+    /** Allowed command prefixes that the MCP server may execute. */
     const ALLOWED_MCP_COMMANDS = [
         'pylot.agent.appendAndExecute',
         'pylot.agent.executeRange',
         'pylot.agent.getExecutionStatus',
         'pylot.agent.evaluateExpression',
         'pylot.agent.getOutput',
+        'pylot.agent.readFile',
+        'pylot.agent.editCode',
+        'pylot.agent.restartRepl',
+        'pylot.agent.interruptExecution',
     ];
+
+    const MCP_TOOLS = [
+        {
+            name: 'pylot_append_and_execute',
+            description: 'Appends Python code to the bottom of the active Python editor and executes it in the persistent Pylot REPL. The REPL is stateful: variables defined in previous calls remain available. Returns the captured stdout/stderr output and a success flag.',
+            inputSchema: {
+                type: 'object',
+                properties: {
+                    code: { type: 'string', description: 'Python source code to append and execute. May be multi-line.' }
+                },
+                required: ['code']
+            }
+        },
+        {
+            name: 'pylot_execute_range',
+            description: 'Executes a range of lines already present in the active Python editor (0-indexed). Useful for re-running an existing section of code without appending new lines.',
+            inputSchema: {
+                type: 'object',
+                properties: {
+                    startLine: { type: 'integer', description: 'First line to execute (0-indexed, inclusive).' },
+                    endLine: { type: 'integer', description: 'Last line to execute (0-indexed, inclusive).' }
+                },
+                required: ['startLine', 'endLine']
+            }
+        },
+        {
+            name: 'pylot_get_status',
+            description: 'Returns the current execution status of the Pylot REPL. Use this to check whether the REPL is ready before sending code, or to poll until a long-running execution completes.',
+            inputSchema: { type: 'object', properties: {} }
+        },
+        {
+            name: 'pylot_evaluate_expression',
+            description: 'Evaluates a single Python expression in the REPL without appending it to the editor. Returns the string representation, type, shape (for NumPy arrays), and length (for sized objects). Ideal for inspecting variable values without modifying the document.',
+            inputSchema: {
+                type: 'object',
+                properties: {
+                    expression: { type: 'string', description: 'A valid Python expression (not a statement) to evaluate, e.g. "my_df.shape".' }
+                },
+                required: ['expression']
+            }
+        },
+        {
+            name: 'pylot_get_output',
+            description: 'Returns the accumulated stdout/stderr text from the most recent code execution. Call this after pylot_append_and_execute or pylot_execute_range to retrieve all printed output.',
+            inputSchema: { type: 'object', properties: {} }
+        },
+        {
+            name: 'pylot_read_file',
+            description: 'Reads the current contents of the active Python editor. Use this to inspect the current code before modifying it or to find exact line numbers for execution.',
+            inputSchema: {
+                type: 'object',
+                properties: {
+                    include_line_numbers: { type: 'boolean', description: "If true, prepends 0-indexed line numbers to each line (e.g., '0: import sys', '1: print(sys.path)')." }
+                }
+            }
+        },
+        {
+            name: 'pylot_edit_code',
+            description: 'Modifies the active Python file using an exact search and replace. Use this to fix errors, refactor code, or update variables without rewriting the entire file.',
+            inputSchema: {
+                type: 'object',
+                properties: {
+                    search_string: { type: 'string', description: 'The exact string currently in the file that you want to replace.' },
+                    replace_string: { type: 'string', description: 'The new string to insert in place of the search_string.' }
+                },
+                required: ['search_string', 'replace_string']
+            }
+        },
+        {
+            name: 'pylot_restart_repl',
+            description: 'Restarts the persistent Python REPL, clearing all memory, user-defined variables, and imported modules.',
+            inputSchema: { type: 'object', properties: {} }
+        },
+        {
+            name: 'pylot_interrupt_execution',
+            description: 'Sends a KeyboardInterrupt (Ctrl+C) to the running Python process. Use this to stop infinite loops or long-running computations.',
+            inputSchema: { type: 'object', properties: {} }
+        }
+    ];
+
+    const MCP_TOOL_COMMAND_MAP: Record<string, string> = {
+        pylot_append_and_execute: 'pylot.agent.appendAndExecute',
+        pylot_execute_range: 'pylot.agent.executeRange',
+        pylot_get_status: 'pylot.agent.getExecutionStatus',
+        pylot_evaluate_expression: 'pylot.agent.evaluateExpression',
+        pylot_get_output: 'pylot.agent.getOutput',
+        pylot_read_file: 'pylot.agent.readFile',
+        pylot_edit_code: 'pylot.agent.editCode',
+        pylot_restart_repl: 'pylot.agent.restartRepl',
+        pylot_interrupt_execution: 'pylot.agent.interruptExecution'
+    };
+
+    const mcpSessions = new Map<string, http.ServerResponse>();
 
     function startMcpHttpServer(port: number) {
         if (mcpHttpServer) { return; }
 
-        mcpHttpServer = http.createServer((req, res) => {
-            if (req.method !== 'POST') {
-                res.writeHead(405);
-                res.end(JSON.stringify({ error: 'Method not allowed' }));
+        mcpHttpServer = http.createServer(async (req, res) => {
+            const url = req.url || '/';
+            const method = req.method;
+
+            // ── CORS Headers ────────────────────────────────────────────────
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-mcp-protocol-version');
+
+            if (method === 'OPTIONS') {
+                res.writeHead(204);
+                res.end();
                 return;
             }
 
-            let body = '';
-            req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-            req.on('end', async () => {
-                try {
-                    const { command, args } = JSON.parse(body);
+            logMcpDebug(`[Pylot MCP] Request: ${method} ${url}`);
 
-                    if (!ALLOWED_MCP_COMMANDS.includes(command)) {
-                        res.writeHead(403, { 'Content-Type': 'application/json' });
-                        res.end(JSON.stringify({ error: `Command not allowed: ${command}` }));
-                        return;
+            // 1. SSE Connection Endpoint
+            if (url === '/sse' && method === 'GET') {
+                const sessionId = Date.now().toString() + Math.random().toString(36).substring(2, 7);
+                logMcpDebug(`[Pylot MCP] Establishing SSE connection (session: ${sessionId})...`);
+                
+                // Set socket options for immediate delivery
+                req.socket.setNoDelay(true);
+                req.socket.setKeepAlive(true);
+
+                res.writeHead(200, {
+                    'Content-Type': 'text/event-stream',
+                    'Cache-Control': 'no-cache',
+                    'Connection': 'keep-alive',
+                    'Access-Control-Allow-Origin': '*'
+                });
+                res.flushHeaders();
+
+                // Initial endpoint event - include sessionId in the POST URI
+                res.write(`event: endpoint\ndata: /message?sessionId=${sessionId}\n\n`);
+                
+                mcpSessions.set(sessionId, res);
+                
+                // Heartbeat interval to keep connection alive
+                const heartbeat = setInterval(() => {
+                    if (mcpSessions.get(sessionId) === res) {
+                        res.write(': heartbeat\n\n');
+                    } else {
+                        clearInterval(heartbeat);
                     }
+                }, 15000);
 
-                    const result = await vscode.commands.executeCommand(command, args);
-                    res.writeHead(200, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ result }));
-                } catch (e: any) {
-                    res.writeHead(500, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ error: e?.message || 'Internal error' }));
-                }
-            });
+                req.on('close', () => {
+                    logMcpDebug(`[Pylot MCP] SSE connection closed (session: ${sessionId}).`);
+                    clearInterval(heartbeat);
+                    if (mcpSessions.get(sessionId) === res) {
+                        mcpSessions.delete(sessionId);
+                    }
+                });
+                return;
+            }
+
+            // 2. Message (JSON-RPC) Endpoint
+            if (url.startsWith('/message') && req.method === 'POST') {
+                const urlParsed = new URL(url, `http://localhost:${port}`);
+                const sessionId = urlParsed.searchParams.get('sessionId');
+
+                let body = '';
+                req.on('data', chunk => { body += chunk.toString(); });
+                req.on('end', async () => {
+                    logMcpDebug(`[Pylot MCP] POST /message raw body (session: ${sessionId}): ${body}`);
+                    try {
+                        const msg = JSON.parse(body);
+                        const { id, method, params } = msg;
+
+                        if (id === undefined) {
+                            res.writeHead(204);
+                            res.end();
+                            return;
+                        }
+
+                        let result: any = null;
+                        let error: any = null;
+
+                        switch (method) {
+                            case 'initialize':
+                                result = {
+                                    protocolVersion: params?.protocolVersion || '2024-11-05',
+                                    capabilities: { tools: {} },
+                                    serverInfo: { name: 'pylot-internal-mcp', version: '1.0.0' }
+                                };
+                                break;
+                            case 'tools/list':
+                                result = { tools: MCP_TOOLS };
+                                break;
+                            case 'tools/call':
+                                const toolName = params?.name;
+                                const toolArgs = params?.arguments || {};
+                                const command = MCP_TOOL_COMMAND_MAP[toolName];
+                                if (!command) {
+                                    error = { code: -32602, message: `Unknown tool: ${toolName}` };
+                                } else {
+                                    try {
+                                        const cmdResult = await vscode.commands.executeCommand(command, toolArgs);
+                                        const text = typeof cmdResult === 'string' ? cmdResult : JSON.stringify(cmdResult, null, 2);
+                                        result = { content: [{ type: 'text', text }], isError: false };
+                                    } catch (e: any) {
+                                        result = { content: [{ type: 'text', text: `Error: ${e.message}` }], isError: true };
+                                    }
+                                }
+                                break;
+                            default:
+                                // Fallback for the old raw IPC (backward compat)
+                                if (MCP_TOOL_COMMAND_MAP[method] || ALLOWED_MCP_COMMANDS.includes(msg.command)) {
+                                    const cmd = msg.command || MCP_TOOL_COMMAND_MAP[method];
+                                    const args = msg.args || params;
+                                    try {
+                                        const cmdResult = await vscode.commands.executeCommand(cmd, args);
+                                        result = cmdResult;
+                                    } catch (e: any) {
+                                        error = { code: -32603, message: e.message };
+                                    }
+                                } else {
+                                    error = { code: -32601, message: `Method not found: ${method}` };
+                                }
+                        }
+
+                        const response: any = { jsonrpc: '2.0', id };
+                        if (error) {
+                            response.error = error;
+                        } else {
+                            response.result = result;
+                        }
+
+                        const targetSse = sessionId ? mcpSessions.get(sessionId) : Array.from(mcpSessions.values())[0];
+
+                        if (targetSse) {
+                            logMcpDebug(`[Pylot MCP] Sending response via SSE (session: ${sessionId || 'fallback'}, id: ${id})`);
+                            // Send via SSE
+                            targetSse.write(`event: message\ndata: ${JSON.stringify(response)}\n\n`);
+                            
+                            // Return 200 OK with empty body to the POST request
+                            res.writeHead(200, { 'Content-Type': 'application/json' });
+                            res.end('{}'); 
+                        } else {
+                            // Fallback for simple HTTP IPC (or if SSE wasn't used/found)
+                            res.writeHead(200, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify(response));
+                        }
+                    } catch (e: any) {
+                        logMcpDebug(`[Pylot MCP] Error processing message: ${e.message}`);
+                        res.writeHead(500, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: e.message }));
+                    }
+                });
+                return;
+            }
+
+            // 3. Fallback for the old simple POST / IPC (legacy)
+            if (url === '/' && req.method === 'POST') {
+                let body = '';
+                req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+                req.on('end', async () => {
+                    try {
+                        const { command, args } = JSON.parse(body);
+                        if (!ALLOWED_MCP_COMMANDS.includes(command)) {
+                            res.writeHead(403);
+                            res.end(JSON.stringify({ error: `Forbidden: ${command}` }));
+                            return;
+                        }
+                        const result = await vscode.commands.executeCommand(command, args);
+                        res.writeHead(200, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ result }));
+                    } catch (e: any) {
+                        res.writeHead(500);
+                        res.end(JSON.stringify({ error: e.message }));
+                    }
+                });
+                return;
+            }
+
+            res.writeHead(404);
+            res.end();
         });
 
         mcpHttpServer.on('error', (err: any) => {
             outputChannel.appendLine(`[Pylot MCP] HTTP server error: ${err.message}`);
             if (err.code === 'EADDRINUSE') {
-                outputChannel.appendLine(`[Pylot MCP] Port ${port} is already in use. Change pylot.mcpServer.port in settings.`);
+                outputChannel.appendLine(`[Pylot MCP] Port ${port} is already in use.`);
             }
         });
 
-        mcpHttpServer.listen(port, '127.0.0.1', () => {
-            outputChannel.appendLine(`[Pylot MCP] HTTP IPC server listening on http://127.0.0.1:${port}`);
+        mcpHttpServer.listen(port, () => {
+            logMcpDebug(`[Pylot MCP] Internal server listening on port ${port}`);
+            logMcpDebug(`[Pylot MCP] SSE endpoint: http://localhost:${port}/sse`);
         });
     }
 
@@ -2138,15 +2472,21 @@ while True:
         if (mcpHttpServer) {
             mcpHttpServer.close();
             mcpHttpServer = null;
-            outputChannel.appendLine('[Pylot MCP] HTTP IPC server stopped.');
+            logMcpDebug('[Pylot MCP] HTTP IPC server stopped.');
         }
     }
 
     // Start MCP server if enabled
     const initialMcpConfig = vscode.workspace.getConfiguration('pylot');
-    if (initialMcpConfig.get<boolean>('mcpServer.enabled', false)) {
-        const port = initialMcpConfig.get<number>('mcpServer.port', 7822);
-        startMcpHttpServer(port);
+    const isMcpEnabled = initialMcpConfig.get<boolean>('mcpServer.enabled', false);
+    const mcpPort = initialMcpConfig.get<number>('mcpServer.port', 7822);
+    
+    logMcpDebug(`[Pylot MCP] Checking settings: enabled=${isMcpEnabled}, port=${mcpPort}`);
+
+    if (isMcpEnabled) {
+        startMcpHttpServer(mcpPort);
+    } else {
+        logMcpDebug(`[Pylot MCP] Server is disabled in settings (pylot.mcpServer.enabled).`);
     }
 
     // React to settings changes
@@ -2155,14 +2495,18 @@ while True:
             if (e.affectsConfiguration('pylot.mcpServer.enabled') || e.affectsConfiguration('pylot.mcpServer.port')) {
                 const cfg = vscode.workspace.getConfiguration('pylot');
                 const enabled = cfg.get<boolean>('mcpServer.enabled', false);
+                const port = cfg.get<number>('mcpServer.port', 7822);
+                logMcpDebug(`[Pylot MCP] Settings changed: enabled=${enabled}, port=${port}`);
                 stopMcpHttpServer();
                 if (enabled) {
-                    const port = cfg.get<number>('mcpServer.port', 7822);
                     startMcpHttpServer(port);
                 }
             }
-            if (e.affectsConfiguration('pylot.debugMode')) {
-                debugMode = vscode.workspace.getConfiguration('pylot').get<boolean>('debugMode', false);
+            if (e.affectsConfiguration('pylot.debug.python') || e.affectsConfiguration('pylot.debugMode')) {
+                debugMode = vscode.workspace.getConfiguration('pylot').get<boolean>('debug.python', false) || vscode.workspace.getConfiguration('pylot').get<boolean>('debugMode', false);
+            }
+            if (e.affectsConfiguration('pylot.debug.mcpServer') || e.affectsConfiguration('pylot.mcpServer.debugMode')) {
+                mcpDebugMode = vscode.workspace.getConfiguration('pylot').get<boolean>('debug.mcpServer', false) || vscode.workspace.getConfiguration('pylot').get<boolean>('mcpServer.debugMode', false);
             }
         })
     );

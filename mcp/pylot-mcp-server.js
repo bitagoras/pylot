@@ -113,6 +113,54 @@ const TOOLS = [
             properties: {},
             required: []
         }
+    },
+    {
+        name: 'pylot_read_file',
+        description: 'Reads the current contents of the active Python editor. Use this to inspect the current code before modifying it or to find exact line numbers for execution.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                include_line_numbers: {
+                    type: 'boolean',
+                    description: "If true, prepends 0-indexed line numbers to each line (e.g., '0: import sys', '1: print(sys.path)'). Highly recommended if you plan to use pylot_execute_range next."
+                }
+            },
+            required: ['include_line_numbers']
+        }
+    },
+    {
+        name: 'pylot_edit_code',
+        description: 'Modifies the active Python file using an exact search and replace. Use this to fix errors, refactor code, or update variables without rewriting the entire file.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                search_string: {
+                    type: 'string',
+                    description: 'The exact string currently in the file that you want to replace. Must match the existing code perfectly, including all whitespace and indentation.'
+                },
+                replace_string: {
+                    type: 'string',
+                    description: 'The new string to insert in place of the search_string.'
+                }
+            },
+            required: ['search_string', 'replace_string']
+        }
+    },
+    {
+        name: 'pylot_restart_repl',
+        description: 'Restarts the persistent Python REPL, clearing all memory, user-defined variables, and imported modules. Use this if the REPL state becomes corrupted, or if you need to run the script from a clean slate.',
+        inputSchema: {
+            type: 'object',
+            properties: {}
+        }
+    },
+    {
+        name: 'pylot_interrupt_execution',
+        description: 'Sends a KeyboardInterrupt (Ctrl+C) to the running Python process. Use this to stop infinite loops or long-running computations.',
+        inputSchema: {
+            type: 'object',
+            properties: {}
+        }
     }
 ];
 
@@ -120,10 +168,14 @@ const TOOLS = [
 
 const TOOL_COMMAND_MAP = {
     pylot_append_and_execute: 'pylot.agent.appendAndExecute',
-    pylot_execute_range:      'pylot.agent.executeRange',
-    pylot_get_status:         'pylot.agent.getExecutionStatus',
-    pylot_evaluate_expression:'pylot.agent.evaluateExpression',
-    pylot_get_output:         'pylot.agent.getOutput'
+    pylot_execute_range: 'pylot.agent.executeRange',
+    pylot_get_status: 'pylot.agent.getExecutionStatus',
+    pylot_evaluate_expression: 'pylot.agent.evaluateExpression',
+    pylot_get_output: 'pylot.agent.getOutput',
+    pylot_read_file: 'pylot.agent.readFile',
+    pylot_edit_code: 'pylot.agent.editCode',
+    pylot_restart_repl: 'pylot.agent.restartRepl',
+    pylot_interrupt_execution: 'pylot.agent.interruptExecution'
 };
 
 // ── HTTP IPC helper ──────────────────────────────────────────────────────────
@@ -222,7 +274,7 @@ async function handleMessage(msg) {
         case 'tools/call': {
             const toolName = params?.name;
             const toolArgs = params?.arguments || {};
-            const command  = TOOL_COMMAND_MAP[toolName];
+            const command = TOOL_COMMAND_MAP[toolName];
 
             if (!command) {
                 sendError(id, -32602, `Unknown tool: ${toolName}`);

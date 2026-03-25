@@ -2,7 +2,7 @@
     "name": "pylot",
     "displayName": "Pylot - Python code runner",
     "description": "Executes lines of Python code with visualized smart selection.",
-    "version": "1.3.0",
+    "version": "1.4.0",
     "publisher": "bitagoras",
     "repository": "https://github.com/bitagoras/pylot",
     "engines": {
@@ -12,7 +12,8 @@
         "Other"
     ],
     "activationEvents": [
-        "onLanguage:python"
+        "onLanguage:python",
+        "onStartupFinished"
     ],
     "main": "./extension.js",
     "icon": "pylot.png",
@@ -62,22 +63,27 @@
                     "default": "gutter",
                     "description": "Configures the visual style of execution state markers."
                 },
-                "pylot.debugMode": {
+                "pylot.debug.python": {
                     "type": "boolean",
                     "default": false,
-                    "description": "Enables detailed debug output in the Pylot output panel to help diagnose issues with code execution. (Requires Python restart to take effect)"
+                    "description": "Pylot: Debug Mode Python. Enables detailed debug output in the Pylot output panel for the Python session and smart selection. (Requires Python restart for some features to take effect)"
+                },
+                "pylot.debug.mcpServer": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Pylot: Debug Mode MCP Server. Enables detailed debug output for the internal MCP server."
                 },
                 "pylot.mcpServer.enabled": {
                     "type": "boolean",
                     "default": false,
-                    "description": "Start a local HTTP server so external MCP clients (e.g. Kilocode) can call the Pylot REPL via the bundled MCP server script (mcp/pylot-mcp-server.js). Requires a window reload to take effect."
+                    "description": "Start an internal MCP server so external AI agents (e.g. Kilocode) can call Pylot tools directly via the SSE (Server-Sent Events) transport. This eliminates the need for an external Node.js bridge script. Requires a window reload to take effect."
                 },
                 "pylot.mcpServer.port": {
                     "type": "integer",
                     "default": 7822,
                     "minimum": 1024,
                     "maximum": 65535,
-                    "description": "Localhost port for the Pylot MCP HTTP IPC server. The MCP server script (mcp/pylot-mcp-server.js) must be given the same port number as its first argument. Requires a window reload to take effect."
+                    "description": "Localhost port for the Pylot MCP server. Clients should connect to the SSE endpoint: http://localhost:[port]/sse. Requires a window reload to take effect."
                 }
             }
         },

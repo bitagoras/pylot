@@ -2,6 +2,27 @@
 
 All notable changes to the **Pylot** extension will be documented in this file.
 
+## [1.4.0] - 2026-03-25
+
+### New Features
+- **Native MCP SSE Server**: Replaced the external Node.js bridge with a high-performance, built-in MCP (Model Context Protocol) server using the SSE (Server-Sent Events) transport. This "battery-included" solution eliminates the need for an external `node` dependency and provides a seamless setup for AI agents like **Continue** and **Kilocode**.
+- **Multi-Client Support**: The server now handles multiple concurrent AI agents through unique session IDs.
+- **Granular Debug Settings**: Split `pylot.debugMode` into `pylot.debug.python` and `pylot.debug.mcpServer` for more precise diagnostic control.
+- **Automatic Activation**: The internal MCP server now activates automatically on extension startup when enabled.
+
+### Improvements
+- **Protocol Compliance**: Strict JSON-RPC 2.0 handling and proper SSE framing for maximum agent compatibility.
+- **Project Structure**: Excluded legacy MCP bridge scripts from the VSIX package to reduce extension size.
+
+## [1.3.1] - 2026-03-23
+
+### New Features
+- **Enhanced AI Agency**: Expanded the MCP server with four new tools for better interactive control:
+  - `pylot_read_file`: Reads the active editor's content (with optional line numbers).
+  - `pylot_edit_code`: Performs surgical, precise search-and-replace edits.
+  - `pylot_restart_repl`: Resets the Python REPL state and clears its memory.
+  - `pylot_interrupt_execution`: Manually stops running code (KeyboardInterrupt).
+
 ## [1.3.0] - 2026-03-22
 
 ### New Features
@@ -11,8 +32,6 @@ All notable changes to the **Pylot** extension will be documented in this file.
 
 ### Improvements
 - **Running Marker Style**: Refined the orange running gutter marker with a flowing dashed line and a synchronized breathing opacity effect.
-
-## [1.2.6] - 2026-03-11
 
 ### Improvements
 - **Error Marker Style**: Updated the red error gutter marker to feature a continuous, subtle sine wave instead of a straight line.
