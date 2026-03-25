@@ -13,6 +13,7 @@ All notable changes to the **Pylot** extension will be documented in this file.
 ### Improvements
 - **Protocol Compliance**: Strict JSON-RPC 2.0 handling and proper SSE framing for maximum agent compatibility.
 - **Project Structure**: Excluded legacy MCP bridge scripts from the VSIX package to reduce extension size.
+- **Cell Syntax Change**: Changed the cell comment from `#%%` to `#%` to allow cells that are not recognized by other Python extensions.
 
 ## [1.3.1] - 2026-03-23
 
