@@ -53,6 +53,7 @@ Pylot provides the following settings to customize its behavior:
 - `pylot.mcpServer.port`: Port for the MCP server (default: `7822`).
 - `pylot.enableInlayHints`: Globally toggle the live variable inlay hints (default: `true`).
 - `pylot.maxInlayHintLength`: Maximum characters for an inlay hint before it is truncated (default: `50`).
+- `pylot.inlayHintColor`: Custom color for the variable overlay in hex format (default: `#ffdf0088`).
 
 ## Requirements
 

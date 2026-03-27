@@ -117,95 +117,123 @@ export function activate(context: vscode.ExtensionContext) {
 
         clearUri(uri: string) {
             this.hints.delete(uri);
+            this.refreshAllEditors();
         }
 
-        adjustForDocumentChanges(uri: string, changes: readonly vscode.TextDocumentContentChangeEvent[]): boolean {
-            let uriMap = this.hints.get(uri);
-            if (!uriMap) return false;
+        getHintsForUri(uri: string): Map<number, string> | undefined {
+            return this.hints.get(uri);
+        }
 
-            let changed = false;
+        refreshAllEditors() {
+            vscode.window.visibleTextEditors.forEach(editor => {
+                if (editor.document.languageId === 'python') {
+                    this.applyToEditor(editor);
+                }
+            });
+        }
+
+        applyToEditor(editor: vscode.TextEditor) {
+            const config = getHintsConfig();
+            if (!config.get<boolean>('enableInlayHints', true)) {
+                editor.setDecorations(hintDecorationType, []);
+                return;
+            }
+
+            const uri = editor.document.uri.toString();
+            const uriMap = this.hints.get(uri);
+            if (!uriMap) {
+                editor.setDecorations(hintDecorationType, []);
+                return;
+            }
+
+            const decorations: vscode.DecorationOptions[] = [];
+            for (const [line, text] of uriMap.entries()) {
+                if (line >= editor.document.lineCount) continue;
+                
+                const range = new vscode.Range(line, 1000, line, 1000);
+                decorations.push({
+                    range,
+                    renderOptions: {
+                        after: {
+                            contentText: ` → ${text}`
+                        }
+                    }
+                });
+            }
+            editor.setDecorations(hintDecorationType, decorations);
+        }
+
+        adjustForDocumentChanges(uri: string, changes: readonly vscode.TextDocumentContentChangeEvent[]) {
+            let uriMap = this.hints.get(uri);
+            if (!uriMap) return;
+
             for (const change of changes) {
                 const linesInserted = change.text.split('\n').length - 1;
                 const linesDeleted = change.range.end.line - change.range.start.line;
                 const lineDelta = linesInserted - linesDeleted;
-
-                if (lineDelta === 0) continue;
-                changed = true;
+                
+                const startLine = change.range.start.line;
+                const endLine = change.range.end.line;
 
                 const newMap = new Map<number, string>();
                 for (const [line, text] of uriMap.entries()) {
-                    if (line > change.range.start.line) {
+                    // Clear hints for any line that was directly modified
+                    if (line >= startLine && line <= endLine) {
+                        continue;
+                    }
+
+                    if (line > endLine) {
+                        // Shift hints for lines following the edit
                         newMap.set(line + lineDelta, text);
-                    } else if (line === change.range.start.line) {
-                        if (change.range.start.character === 0 && lineDelta > 0) {
-                            newMap.set(line + lineDelta, text);
-                        } else {
-                            newMap.set(line, text);
-                        }
                     } else {
+                        // Keep hints for lines preceding the edit
                         newMap.set(line, text);
                     }
                 }
                 uriMap = newMap;
                 this.hints.set(uri, uriMap);
             }
-            return changed;
+            this.refreshAllEditors();
         }
     }
+
+    let hintDecorationType: vscode.TextEditorDecorationType;
+
+    function updateDecorationType() {
+        if (hintDecorationType) {
+            hintDecorationType.dispose();
+        }
+        const config = getHintsConfig();
+        const color = config.get<string>('inlayHintColor', '#ffdf0088');
+        hintDecorationType = vscode.window.createTextEditorDecorationType({
+            after: {
+                margin: '0 0 0 1.5em',
+                color: color,
+                fontStyle: 'italic'
+            }
+        });
+    }
+
+    updateDecorationType();
 
     const hintStore = new HintStore();
 
-    class PylotInlayHintsProvider implements vscode.InlayHintsProvider {
-        private _onDidChangeInlayHints = new vscode.EventEmitter<void>();
-        readonly onDidChangeInlayHints = this._onDidChangeInlayHints.event;
-
-        refresh() {
-            this._onDidChangeInlayHints.fire();
-        }
-
-        provideInlayHints(document: vscode.TextDocument, range: vscode.Range, token: vscode.CancellationToken): vscode.InlayHint[] {
-            const config = getHintsConfig();
-            if (!config.get<boolean>('enableInlayHints', true)) {
-                return [];
-            }
-
-            const hints: vscode.InlayHint[] = [];
-            const uri = document.uri.toString();
-
-            for (let i = range.start.line; i <= range.end.line; i++) {
-                const text = hintStore.getHintsForLine(uri, i);
-                if (text) {
-                    const hint = new vscode.InlayHint(
-                        new vscode.Position(i, 1000), // Far right (clamped by VS Code if needed)
-                        ` → ${text}`,
-                        vscode.InlayHintKind.Parameter
-                    );
-                    hint.tooltip = text;
-                    hints.push(hint);
-                }
-            }
-            return hints;
-        }
-    }
-
-    const inlayHintsProvider = new PylotInlayHintsProvider();
-    // Register inlay hints provider
-    context.subscriptions.push(
-        vscode.languages.registerInlayHintsProvider(
-            { scheme: 'file', language: 'python' },
-            inlayHintsProvider
-        )
-    );
-
     vscode.workspace.onDidChangeConfiguration(e => {
         if (e.affectsConfiguration('pylot.enableInlayHints')) {
-            inlayHintsProvider.refresh();
+            hintStore.refreshAllEditors();
+        } else if (e.affectsConfiguration('pylot.inlayHintColor')) {
+            updateDecorationType();
+            hintStore.refreshAllEditors();
         }
     }, null, context.subscriptions);
 
     vscode.workspace.onDidChangeTextDocument(e => {
-        if (hintStore.adjustForDocumentChanges(e.document.uri.toString(), e.contentChanges)) {
-            inlayHintsProvider.refresh();
+        hintStore.adjustForDocumentChanges(e.document.uri.toString(), e.contentChanges);
+    }, null, context.subscriptions);
+
+    vscode.window.onDidChangeActiveTextEditor(editor => {
+        if (editor && editor.document.languageId === 'python') {
+            hintStore.applyToEditor(editor);
         }
     }, null, context.subscriptions);
 
@@ -758,7 +786,7 @@ while True:
             try:
                 import ast
                 for node in ast.walk(ast.parse(adjusted_code)):
-                    if isinstance(node, ast.Name):
+                    if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
                         changed_keys.add(node.id)
                         if hasattr(node, 'lineno'):
                             if node.id not in key_to_line or node.lineno > key_to_line[node.id]:
@@ -977,7 +1005,7 @@ while True:
                                                     text = text.substring(0, maxLen - 3) + '...';
                                                 }
                                                 hintStore.setHint(uri, msg.line, text);
-                                                inlayHintsProvider.refresh();
+                                                 hintStore.refreshAllEditors();
                                             }
                                         }
                                         break;
@@ -1103,7 +1131,7 @@ while True:
     /** Kill the REPL process if it is running. */
     function stopRepl() {
         hintStore.clear();
-        inlayHintsProvider.refresh();
+        hintStore.refreshAllEditors();
         if (currentExecutionCallback) {
             currentExecutionCallback(false);
             currentExecutionCallback = null;
@@ -2117,7 +2145,7 @@ while True:
 
     const clearInlayHintsCommand = vscode.commands.registerCommand('pylot.clearInlayHints', () => {
         hintStore.clear();
-        inlayHintsProvider.refresh();
+        hintStore.refreshAllEditors();
         vscode.window.showInformationMessage('Pylot: Inlay hints cleared.');
     });
 

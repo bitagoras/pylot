@@ -9,9 +9,10 @@ All notable changes to the **Pylot** extension will be documented in this file.
 - **Expression Result Previews**: Executing single expressions (e.g., `1 + 1` or a string) now displays the evaluation result directly in the editor as an inlay hint.
 - **Smart AST-Based Placement**: Hints are intelligently anchored to the specific line where a variable was last modified or referenced within an executed block, rather than just the first line.
 - **Toggle & Clear Commands**: Added `Pylot: Toggle Inlay Hints` and `Pylot: Clear Inlay Hints` to the command palette for easy UI management.
-- **Truncation Support**: Added `pylot.maxInlayHintLength` to prevent long variable values from cluttering the editor.
-
-### Improvements
+- **Adjustable Styling**: Added `pylot.inlayHintColor` setting to customize the appearance of the Live Variable Overlay.
+- `pylot.maxInlayHintLength`: Maximum characters for an inlay hint before it is truncated (default: `50`).
+- `pylot.inlayHintColor`: Custom color for the variable overlay in hex format (default: `#ffdf0088`).
+- **Improved Default Color**: Switched to a slightly warmer yellow-gold (`#ffdf0088`) for better visibility.
 - **Quote Formatting**: String variables in inlay hints are now automatically enclosed in quotes for better readability.
 
 ## [1.4.1] - 2026-03-27

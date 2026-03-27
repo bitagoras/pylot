@@ -96,6 +96,11 @@
                     "minimum": 10,
                     "maximum": 500,
                     "description": "Pylot: Maximum length of Inlay Hints. Values longer than this will be truncated."
+                },
+                "pylot.inlayHintColor": {
+                    "type": "string",
+                    "default": "#5588ff77",
+                    "description": "Pylot: Color for the Live Variable Overlay (CSS hex, e.g. #5588ff77)."
                 }
             }
         },
