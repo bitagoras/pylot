@@ -16,7 +16,7 @@ A VS Code extension that runs Python code directly from the editor using smart s
 - **Cell execution** – `Shift+Enter` at a cell comment, which starts with `#%`, executes the entire cell until the next cell comment or the end of the file.
 - **Execution interruption** – Easily interrupt long-running or stuck code using `Ctrl+Alt+C` without losing your Python state.
 - **Matplotlib support** – Keeps multiple Matplotlib plot windows open and interactive while you continue working.
-- **AI agent integration** – Expose the REPL to AI coding assistants (Kilocode, Continue, etc.) via a built-in MCP server bridge.
+- **AI agent integration** – Expose the Python REPL to AI coding agents via a built-in MCP server.
 
 <br>
 
@@ -30,8 +30,8 @@ A VS Code extension that runs Python code directly from the editor using smart s
 |---------|--------|------------------|
 | Execute Selected Python | Run selected code and advance cursor | `Shift+Enter` |
 | Execute Selected Python (No Cursor Move) | Run selected code, keep cursor in place | `Shift+Ctrl+Enter` |
-| Execute Whole Python Program | Run the entire file | `Shift+Ctrl+Alt+Enter` |
-| Restart Python | Restart the Python session | – |
+| Execute Whole Python Program | Run the entire current file | `Shift+Ctrl+Alt+Enter` |
+| Restart Python | Restart the Python session (REPL) | – |
 | Clear Python Output | Clear the output channel | `Ctrl+Shift+C` |
 | Hide Active Line Markers | Hide currently active line markers | – |
 | Evaluate Python Expression | Evaluate expression or variable and show tooltip | `Ctrl+Shift+Space` |

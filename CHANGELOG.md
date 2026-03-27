@@ -1,7 +1,12 @@
 # Changelog
 
 All notable changes to the **Pylot** extension will be documented in this file.
-
+ 
+## [1.4.1] - 2026-03-27
+ 
+### Improvements
+- **Simplified Command Palette**: Hidden "Pylot Agent" commands from the command palette to reduce UI clutter. These commands are now exclusively intended for AI agents (e.g. via MCP).
+ 
 ## [1.4.0] - 2026-03-25
 
 ### New Features
