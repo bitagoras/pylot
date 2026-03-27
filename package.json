@@ -84,6 +84,18 @@
                     "minimum": 1024,
                     "maximum": 65535,
                     "description": "Localhost port for the Pylot MCP server. Clients should connect to the SSE endpoint: http://localhost:[port]/sse. Requires a window reload to take effect."
+                },
+                "pylot.enableInlayHints": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Pylot: Enable Live Variable Overlay. Shows variable values at the end of executed Python lines using Inlay Hints."
+                },
+                "pylot.maxInlayHintLength": {
+                    "type": "integer",
+                    "default": 50,
+                    "minimum": 10,
+                    "maximum": 500,
+                    "description": "Pylot: Maximum length of Inlay Hints. Values longer than this will be truncated."
                 }
             }
         },
@@ -115,6 +127,14 @@
             {
                 "command": "pylot.evaluateExpression",
                 "title": "Pylot: Evaluate Python Expression"
+            },
+            {
+                "command": "pylot.clearInlayHints",
+                "title": "Pylot: Clear Inlay Hints"
+            },
+            {
+                "command": "pylot.toggleInlayHints",
+                "title": "Pylot: Toggle Inlay Hints"
             },
             {
                 "command": "pylot.interruptExecution",

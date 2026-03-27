@@ -88,6 +88,127 @@ const MPL_EVENT_PUMP_INTERVAL_S = 0.05;
 // ── Activation ──────────────────────────────────────────────────────────────
 
 export function activate(context: vscode.ExtensionContext) {
+    // ── Inlay Hint Management ───────────────────────────────────────────
+
+    function getHintsConfig() {
+        return vscode.workspace.getConfiguration('pylot');
+    }
+
+    class HintStore {
+        // Map<uri, Map<line, hintText>>
+        private hints = new Map<string, Map<number, string>>();
+
+        setHint(uri: string, line: number, text: string) {
+            let uriMap = this.hints.get(uri);
+            if (!uriMap) {
+                uriMap = new Map<number, string>();
+                this.hints.set(uri, uriMap);
+            }
+            uriMap.set(line, text);
+        }
+
+        getHintsForLine(uri: string, line: number): string | undefined {
+            return this.hints.get(uri)?.get(line);
+        }
+
+        clear() {
+            this.hints.clear();
+        }
+
+        clearUri(uri: string) {
+            this.hints.delete(uri);
+        }
+
+        adjustForDocumentChanges(uri: string, changes: readonly vscode.TextDocumentContentChangeEvent[]): boolean {
+            let uriMap = this.hints.get(uri);
+            if (!uriMap) return false;
+
+            let changed = false;
+            for (const change of changes) {
+                const linesInserted = change.text.split('\n').length - 1;
+                const linesDeleted = change.range.end.line - change.range.start.line;
+                const lineDelta = linesInserted - linesDeleted;
+
+                if (lineDelta === 0) continue;
+                changed = true;
+
+                const newMap = new Map<number, string>();
+                for (const [line, text] of uriMap.entries()) {
+                    if (line > change.range.start.line) {
+                        newMap.set(line + lineDelta, text);
+                    } else if (line === change.range.start.line) {
+                        if (change.range.start.character === 0 && lineDelta > 0) {
+                            newMap.set(line + lineDelta, text);
+                        } else {
+                            newMap.set(line, text);
+                        }
+                    } else {
+                        newMap.set(line, text);
+                    }
+                }
+                uriMap = newMap;
+                this.hints.set(uri, uriMap);
+            }
+            return changed;
+        }
+    }
+
+    const hintStore = new HintStore();
+
+    class PylotInlayHintsProvider implements vscode.InlayHintsProvider {
+        private _onDidChangeInlayHints = new vscode.EventEmitter<void>();
+        readonly onDidChangeInlayHints = this._onDidChangeInlayHints.event;
+
+        refresh() {
+            this._onDidChangeInlayHints.fire();
+        }
+
+        provideInlayHints(document: vscode.TextDocument, range: vscode.Range, token: vscode.CancellationToken): vscode.InlayHint[] {
+            const config = getHintsConfig();
+            if (!config.get<boolean>('enableInlayHints', true)) {
+                return [];
+            }
+
+            const hints: vscode.InlayHint[] = [];
+            const uri = document.uri.toString();
+
+            for (let i = range.start.line; i <= range.end.line; i++) {
+                const text = hintStore.getHintsForLine(uri, i);
+                if (text) {
+                    const hint = new vscode.InlayHint(
+                        new vscode.Position(i, 1000), // Far right (clamped by VS Code if needed)
+                        ` → ${text}`,
+                        vscode.InlayHintKind.Parameter
+                    );
+                    hint.tooltip = text;
+                    hints.push(hint);
+                }
+            }
+            return hints;
+        }
+    }
+
+    const inlayHintsProvider = new PylotInlayHintsProvider();
+    // Register inlay hints provider
+    context.subscriptions.push(
+        vscode.languages.registerInlayHintsProvider(
+            { scheme: 'file', language: 'python' },
+            inlayHintsProvider
+        )
+    );
+
+    vscode.workspace.onDidChangeConfiguration(e => {
+        if (e.affectsConfiguration('pylot.enableInlayHints')) {
+            inlayHintsProvider.refresh();
+        }
+    }, null, context.subscriptions);
+
+    vscode.workspace.onDidChangeTextDocument(e => {
+        if (hintStore.adjustForDocumentChanges(e.document.uri.toString(), e.contentChanges)) {
+            inlayHintsProvider.refresh();
+        }
+    }, null, context.subscriptions);
+
     vscode.commands.executeCommand('setContext', 'pylotMarkerActive', true);
     vscode.commands.executeCommand('setContext', 'pylotActive', true);
 
@@ -412,6 +533,23 @@ def send_msg(msg_type, **kwargs):
         real_stdout.write(f"<<<PYLOT_JSON>>>{json.dumps(kwargs)}\\n")
         real_stdout.flush()
 
+def get_locals_summary(changed_keys=None):
+    try:
+        import types
+        summary = []
+        for name, val in persistent_globals.items():
+            if name.startswith('_'): continue
+            if changed_keys is not None and name not in changed_keys: continue
+            if isinstance(val, (types.ModuleType, types.FunctionType, types.MethodType, type)):
+                continue
+            s_val = repr(val) if isinstance(val, str) else str(val)
+            if len(s_val) > 100:
+                s_val = s_val[:97] + "..."
+            summary.append(f"{name}={s_val}")
+        return ", ".join(summary)
+    except Exception:
+        return ""
+
 send_msg('ready', version=sys.version.split()[0])
 
 def print_exception_with_links(e):
@@ -589,6 +727,7 @@ while True:
             adjusted_code = ("\\n" * (start_line - 1)) + adjusted_code
 
         try:
+            old_ids = {k: id(v) for k, v in persistent_globals.items()}
             if is_expression:
                 result = eval(compiled, persistent_globals)
                 if result is not None:
@@ -602,12 +741,41 @@ while True:
                         except Exception:
                             pass
                     send_msg('execute', success=True, datatype=datatype, shape=shape, len=length)
+                    
+                    res_str = repr(result) if isinstance(result, str) else str(result)
+                    if len(res_str) > 100: res_str = res_str[:97] + "..."
+                    expr_last_line_idx = adjusted_code.rstrip().count('\\n')
+                    send_msg('hints', line=expr_last_line_idx, text=res_str, filename=filename)
                 else:
                     send_msg('execute', success=True)
             else:
                 compiled = compile(adjusted_code, filename, 'exec')
                 exec(compiled, persistent_globals)
                 send_msg('execute', success=True)
+
+            changed_keys = {k for k, v in persistent_globals.items() if k not in old_ids or old_ids[k] != id(v)}
+            key_to_line = {}
+            try:
+                import ast
+                for node in ast.walk(ast.parse(adjusted_code)):
+                    if isinstance(node, ast.Name):
+                        changed_keys.add(node.id)
+                        if hasattr(node, 'lineno'):
+                            if node.id not in key_to_line or node.lineno > key_to_line[node.id]:
+                                key_to_line[node.id] = node.lineno
+            except Exception:
+                pass
+
+            line_keys = {}
+            fallback_line = adjusted_code.rstrip().count('\\n') + 1
+            for k in changed_keys:
+                l = key_to_line.get(k, fallback_line)
+                line_keys.setdefault(l, set()).add(k)
+                
+            for l, keys in line_keys.items():
+                summary = get_locals_summary(keys)
+                if summary:
+                    send_msg('hints', line=l-1, text=summary, filename=filename)
         except KeyboardInterrupt:
             print("\\nKeyboardInterrupt", file=sys.stderr)
             send_msg('execute', success=False)
@@ -796,6 +964,23 @@ while True:
                                             }
                                         }
                                         break;
+                                    case 'hints':
+                                        const hintConfig = getHintsConfig();
+                                        if (hintConfig.get<boolean>('enableInlayHints', true)) {
+                                            const uri = (msg.filename && msg.filename !== '<string>')
+                                                ? vscode.Uri.file(msg.filename).toString()
+                                                : vscode.window.activeTextEditor?.document.uri.toString();
+                                            if (uri) {
+                                                const maxLen = hintConfig.get<number>('maxInlayHintLength', 50);
+                                                let text = msg.text || '';
+                                                if (text.length > maxLen) {
+                                                    text = text.substring(0, maxLen - 3) + '...';
+                                                }
+                                                hintStore.setHint(uri, msg.line, text);
+                                                inlayHintsProvider.refresh();
+                                            }
+                                        }
+                                        break;
                                 }
                             } catch (e) {
                                 // Fallback for invalid JSON
@@ -917,6 +1102,8 @@ while True:
 
     /** Kill the REPL process if it is running. */
     function stopRepl() {
+        hintStore.clear();
+        inlayHintsProvider.refresh();
         if (currentExecutionCallback) {
             currentExecutionCallback(false);
             currentExecutionCallback = null;
@@ -1926,6 +2113,21 @@ while True:
         }
     });
 
+    // ── Inlay Hints Commands ────────────────────────────────────────────
+
+    const clearInlayHintsCommand = vscode.commands.registerCommand('pylot.clearInlayHints', () => {
+        hintStore.clear();
+        inlayHintsProvider.refresh();
+        vscode.window.showInformationMessage('Pylot: Inlay hints cleared.');
+    });
+
+    const toggleInlayHintsCommand = vscode.commands.registerCommand('pylot.toggleInlayHints', () => {
+        const config = vscode.workspace.getConfiguration('pylot');
+        const currentValue = config.get<boolean>('enableInlayHints', true);
+        config.update('enableInlayHints', !currentValue, vscode.ConfigurationTarget.Global);
+        vscode.window.showInformationMessage(`Pylot: Inlay hints ${!currentValue ? 'enabled' : 'disabled'}.`);
+    });
+
     // ── AI Agent API Commands ───────────────────────────────────────────
 
     const agentAppendAndExecuteCommand = vscode.commands.registerCommand('pylot.agent.appendAndExecute', async (args?: { code: string }) => {
@@ -2151,6 +2353,8 @@ while True:
     context.subscriptions.push(interruptCommand);
     context.subscriptions.push(openFileCommand);
     context.subscriptions.push(linkProvider);
+    context.subscriptions.push(clearInlayHintsCommand);
+    context.subscriptions.push(toggleInlayHintsCommand);
 
     // Agent Subscriptions
     context.subscriptions.push(agentAppendAndExecuteCommand);
