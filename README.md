@@ -99,4 +99,4 @@ MIT
 
 ## Author
 
-[bitagoras](https://github.com/bitagoras)
+[bitagoras](https://github.com/bitagoras), 100% AI-assisted development (Gemini and Claude models)
