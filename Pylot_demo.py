@@ -12,9 +12,9 @@ anywhere in the block"""
 
 # An animated line indicates that Python is busy.
 import time
-for i in 5,4,3,2,1:
-    print("Wait", '* '*i)
-    time.sleep(1)
+for i in range(10):
+    print("Wait " if i==0 else "* ", end="\n"*(i==9), flush=True)
+    time.sleep(0.5)
 
 print('Now we divide 5 by zero:')
 print('The result is:', 5 / 0)   # --> runtime error
