@@ -17,6 +17,8 @@ A VS Code extension that runs Python code directly from the editor using smart s
 - **Execution interruption** – Easily interrupt long-running or stuck code using `Ctrl+Alt+C` without losing your Python state.
 - **Matplotlib support** – Keeps multiple Matplotlib plot windows open and interactive while you continue working.
 - **AI agent integration** – Expose the Python REPL to AI coding agents via a built-in MCP server.
+- **Live Variable Overlay** – See variable values and expression results as inlay hints directly in the editor, right after the line where they were modified.
+- **Live For-Loop Progress Bars** – Automatically shows progress bars for long-running `for` loops directly in the editor, like this: `[■■■■■■■■□□□□□□□□□□□□□] 32%, i=4`.
 
 <br>
 
@@ -36,6 +38,8 @@ A VS Code extension that runs Python code directly from the editor using smart s
 | Hide Active Line Markers | Hide currently active line markers | – |
 | Evaluate Python Expression | Evaluate expression or variable and show tooltip | `Ctrl+Shift+Space` |
 | Interrupt Execution | Interrupt running code (sends KeyboardInterrupt) | `Ctrl+Alt+C` |
+| Toggle Inlay Hints | Enable or disable live variable overlays | – |
+| Clear Inlay Hints | Remove all current variable hints from the editor | – |
 
 ## Configuration
 
@@ -48,6 +52,9 @@ Pylot provides the following settings to customize its behavior:
 - `pylot.debug.mcpServer`: Enables detailed debug output for the internal MCP server.
 - `pylot.mcpServer.enabled`: Start an internal MCP server so AI coding assistants (e.g. Kilocode, Continue) can call Pylot tools directly via the SSE (Server-Sent Events) transport.
 - `pylot.mcpServer.port`: Port for the MCP server (default: `7822`).
+- `pylot.enableInlayHints`: Globally toggle the live variable inlay hints (default: `true`).
+- `pylot.maxInlayHintLength`: Maximum characters for an inlay hint before it is truncated (default: `50`).
+- `pylot.inlayHintColor`: Custom color for the variable overlay in hex format (default: `#ffdf0088`).
 
 ## Requirements
 
@@ -92,4 +99,4 @@ MIT
 
 ## Author
 
-[bitagoras](https://github.com/bitagoras)
+[bitagoras](https://github.com/bitagoras), 100% AI-assisted development (Gemini and Claude models)

@@ -2,7 +2,7 @@
     "name": "pylot",
     "displayName": "Pylot - Python code runner",
     "description": "Executes lines of Python code with visualized smart selection.",
-    "version": "1.4.1",
+    "version": "1.5.0",
     "publisher": "bitagoras",
     "repository": "https://github.com/bitagoras/pylot",
     "engines": {
@@ -84,6 +84,23 @@
                     "minimum": 1024,
                     "maximum": 65535,
                     "description": "Localhost port for the Pylot MCP server. Clients should connect to the SSE endpoint: http://localhost:[port]/sse. Requires a window reload to take effect."
+                },
+                "pylot.enableInlayHints": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Pylot: Enable Live Variable Overlay. Shows variable values at the end of executed Python lines using Inlay Hints."
+                },
+                "pylot.maxInlayHintLength": {
+                    "type": "integer",
+                    "default": 50,
+                    "minimum": 10,
+                    "maximum": 500,
+                    "description": "Pylot: Maximum length of Inlay Hints. Values longer than this will be truncated."
+                },
+                "pylot.inlayHintColor": {
+                    "type": "string",
+                    "default": "#5588ff77",
+                    "description": "Pylot: Color for the Live Variable Overlay (CSS hex, e.g. #5588ff77)."
                 }
             }
         },
@@ -115,6 +132,14 @@
             {
                 "command": "pylot.evaluateExpression",
                 "title": "Pylot: Evaluate Python Expression"
+            },
+            {
+                "command": "pylot.clearInlayHints",
+                "title": "Pylot: Clear Inlay Hints"
+            },
+            {
+                "command": "pylot.toggleInlayHints",
+                "title": "Pylot: Toggle Inlay Hints"
             },
             {
                 "command": "pylot.interruptExecution",

@@ -88,6 +88,155 @@ const MPL_EVENT_PUMP_INTERVAL_S = 0.05;
 // ── Activation ──────────────────────────────────────────────────────────────
 
 export function activate(context: vscode.ExtensionContext) {
+    // ── Inlay Hint Management ───────────────────────────────────────────
+
+    function getHintsConfig() {
+        return vscode.workspace.getConfiguration('pylot');
+    }
+
+    class HintStore {
+        // Map<uri, Map<line, hintText>>
+        private hints = new Map<string, Map<number, string>>();
+
+        setHint(uri: string, line: number, text: string) {
+            let uriMap = this.hints.get(uri);
+            if (!uriMap) {
+                uriMap = new Map<number, string>();
+                this.hints.set(uri, uriMap);
+            }
+            uriMap.set(line, text);
+        }
+
+        getHintsForLine(uri: string, line: number): string | undefined {
+            return this.hints.get(uri)?.get(line);
+        }
+
+        clear() {
+            this.hints.clear();
+        }
+
+        clearUri(uri: string) {
+            this.hints.delete(uri);
+            this.refreshAllEditors();
+        }
+
+        getHintsForUri(uri: string): Map<number, string> | undefined {
+            return this.hints.get(uri);
+        }
+
+        refreshAllEditors() {
+            vscode.window.visibleTextEditors.forEach(editor => {
+                if (editor.document.languageId === 'python') {
+                    this.applyToEditor(editor);
+                }
+            });
+        }
+
+        applyToEditor(editor: vscode.TextEditor) {
+            const config = getHintsConfig();
+            if (!config.get<boolean>('enableInlayHints', true)) {
+                editor.setDecorations(hintDecorationType, []);
+                return;
+            }
+
+            const uri = editor.document.uri.toString();
+            const uriMap = this.hints.get(uri);
+            if (!uriMap) {
+                editor.setDecorations(hintDecorationType, []);
+                return;
+            }
+
+            const decorations: vscode.DecorationOptions[] = [];
+            for (const [line, text] of uriMap.entries()) {
+                if (line >= editor.document.lineCount) continue;
+                
+                const range = new vscode.Range(line, 1000, line, 1000);
+                decorations.push({
+                    range,
+                    renderOptions: {
+                        after: {
+                            contentText: ` → ${text}`
+                        }
+                    }
+                });
+            }
+            editor.setDecorations(hintDecorationType, decorations);
+        }
+
+        adjustForDocumentChanges(uri: string, changes: readonly vscode.TextDocumentContentChangeEvent[]) {
+            let uriMap = this.hints.get(uri);
+            if (!uriMap) return;
+
+            for (const change of changes) {
+                const linesInserted = change.text.split('\n').length - 1;
+                const linesDeleted = change.range.end.line - change.range.start.line;
+                const lineDelta = linesInserted - linesDeleted;
+                
+                const startLine = change.range.start.line;
+                const endLine = change.range.end.line;
+
+                const newMap = new Map<number, string>();
+                for (const [line, text] of uriMap.entries()) {
+                    // Clear hints for any line that was directly modified
+                    if (line >= startLine && line <= endLine) {
+                        continue;
+                    }
+
+                    if (line > endLine) {
+                        // Shift hints for lines following the edit
+                        newMap.set(line + lineDelta, text);
+                    } else {
+                        // Keep hints for lines preceding the edit
+                        newMap.set(line, text);
+                    }
+                }
+                uriMap = newMap;
+                this.hints.set(uri, uriMap);
+            }
+            this.refreshAllEditors();
+        }
+    }
+
+    let hintDecorationType: vscode.TextEditorDecorationType;
+
+    function updateDecorationType() {
+        if (hintDecorationType) {
+            hintDecorationType.dispose();
+        }
+        const config = getHintsConfig();
+        const color = config.get<string>('inlayHintColor', '#ffdf0088');
+        hintDecorationType = vscode.window.createTextEditorDecorationType({
+            after: {
+                margin: '0 0 0 1.5em',
+                color: color,
+                fontStyle: 'italic'
+            }
+        });
+    }
+
+    updateDecorationType();
+
+    const hintStore = new HintStore();
+
+    vscode.workspace.onDidChangeConfiguration(e => {
+        if (e.affectsConfiguration('pylot.enableInlayHints')) {
+            hintStore.refreshAllEditors();
+        } else if (e.affectsConfiguration('pylot.inlayHintColor')) {
+            updateDecorationType();
+            hintStore.refreshAllEditors();
+        }
+    }, null, context.subscriptions);
+
+    vscode.workspace.onDidChangeTextDocument(e => {
+        hintStore.adjustForDocumentChanges(e.document.uri.toString(), e.contentChanges);
+    }, null, context.subscriptions);
+
+    vscode.window.onDidChangeActiveTextEditor(editor => {
+        if (editor && editor.document.languageId === 'python') {
+            hintStore.applyToEditor(editor);
+        }
+    }, null, context.subscriptions);
+
     vscode.commands.executeCommand('setContext', 'pylotMarkerActive', true);
     vscode.commands.executeCommand('setContext', 'pylotActive', true);
 
@@ -386,7 +535,7 @@ export function activate(context: vscode.ExtensionContext) {
      * Matplotlib GUI events between commands.
      */
     const replWrapperCode = `
-import sys, json, traceback, os, re
+import sys, json, traceback, os, re, ast, time
 import threading
 import queue
 import builtins
@@ -412,6 +561,24 @@ def send_msg(msg_type, **kwargs):
         real_stdout.write(f"<<<PYLOT_JSON>>>{json.dumps(kwargs)}\\n")
         real_stdout.flush()
 
+def get_locals_summary(changed_keys=None):
+    try:
+        import types
+        summary = []
+        for name, val in persistent_globals.items():
+            if name.startswith('_'): continue
+            if changed_keys is not None and name not in changed_keys: continue
+            if isinstance(val, (types.ModuleType, types.FunctionType, types.MethodType, type)):
+                continue
+            s_val = repr(val) if isinstance(val, str) else str(val)
+            s_val = s_val.replace('\\n', ' ')
+            if len(s_val) > 100:
+                s_val = s_val[:97] + "..."
+            summary.append(f"{name}={s_val}")
+        return ", ".join(summary)
+    except Exception:
+        return ""
+
 send_msg('ready', version=sys.version.split()[0])
 
 def print_exception_with_links(e):
@@ -422,7 +589,79 @@ def print_exception_with_links(e):
     lines = traceback.format_exception(exc_type, exc_value, exc_tb)
     sys.stderr.write("".join(lines))
 
-persistent_globals = {'__name__': '__main__', '__doc__': None}
+def make_ast_constant(val):
+    if hasattr(ast, 'Constant'):
+        return ast.Constant(value=val)
+    elif isinstance(val, int):
+        return ast.Num(n=val)
+    elif isinstance(val, str):
+        return ast.Str(s=val)
+    return None
+
+class ProgressTransformer(ast.NodeTransformer):
+    def __init__(self, filename):
+        self.filename = filename
+
+    def get_target_name(self, target):
+        if isinstance(target, ast.Name):
+            return target.id
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            return ", ".join(self.get_target_name(elt) for elt in target.elts)
+        return "var"
+
+    def visit_For(self, node):
+        self.generic_visit(node)
+        func_name = ast.Name(id='_pylot_progress', ctx=ast.Load())
+        line_num = make_ast_constant(node.lineno - 1)
+        fname = make_ast_constant(self.filename)
+        var_name = make_ast_constant(self.get_target_name(node.target))
+        call = ast.Call(func=func_name, args=[node.iter, line_num, fname, var_name], keywords=[])
+        ast.copy_location(call, node.iter)
+        node.iter = call
+        return node
+
+def _pylot_progress(iterable, line_number, filename, var_name="var"):
+    try:
+        total = len(iterable)
+    except Exception:
+        total = None
+
+    start_time = time.time()
+    last_update_time = start_time
+    count = 0
+    last_item = None
+
+    try:
+        for item in iterable:
+            last_item = item
+            count += 1
+            current_time = time.time()
+            if current_time - start_time >= 0.5 and current_time - last_update_time >= 0.5:
+                last_update_time = current_time
+                s_item = repr(item) if isinstance(item, str) else str(item)
+                s_item = s_item.replace('\\n', ' ')
+                if len(s_item) > 80: s_item = s_item[:77] + "..."
+                var_str = f"{var_name}={s_item}"
+                
+                if total:
+                    percent = count / total
+                    bar_len = 25
+                    filled = int(bar_len * percent)
+                    bar = '■' * filled + '□' * (bar_len - filled)
+                    progress_str = f"[{bar}] {int(percent*100)}%, {var_str}"
+                else:
+                    progress_str = var_str
+                send_msg('hints', line=line_number, text=progress_str, filename=filename)
+            yield item
+    finally:
+        if count > 0:
+            s_item = repr(last_item) if isinstance(last_item, str) else str(last_item)
+            s_item = s_item.replace('\\n', ' ')
+            if len(s_item) > 80: s_item = s_item[:77] + "..."
+            final_str = f"{var_name}={s_item}"
+            send_msg('hints', line=line_number, text=final_str, filename=filename)
+
+persistent_globals = {'__name__': '__main__', '__doc__': None, '_pylot_progress': _pylot_progress}
 input_queue = queue.Queue()
 input_reply_queue = queue.Queue()
 
@@ -578,6 +817,9 @@ while True:
         if mpl_mode == 'auto' and 'matplotlib' in adjusted_code:
             force_patch_matplotlib()
 
+        if start_line > 1:
+            adjusted_code = ("\\n" * (start_line - 1)) + adjusted_code
+
         is_expression = False
         try:
             compiled = compile(adjusted_code, filename, 'eval')
@@ -585,10 +827,8 @@ while True:
         except SyntaxError:
             is_expression = False
 
-        if start_line > 1:
-            adjusted_code = ("\\n" * (start_line - 1)) + adjusted_code
-
         try:
+            old_ids = {k: id(v) for k, v in persistent_globals.items()}
             if is_expression:
                 result = eval(compiled, persistent_globals)
                 if result is not None:
@@ -602,12 +842,47 @@ while True:
                         except Exception:
                             pass
                     send_msg('execute', success=True, datatype=datatype, shape=shape, len=length)
+                    
+                    res_str = repr(result) if isinstance(result, str) else str(result)
+                    res_str = res_str.replace('\\n', ' ')
+                    if len(res_str) > 100: res_str = res_str[:97] + "..."
+                    expr_last_line_idx = adjusted_code.rstrip().count('\\n')
+                    send_msg('hints', line=expr_last_line_idx, text=res_str, filename=filename)
                 else:
                     send_msg('execute', success=True)
             else:
-                compiled = compile(adjusted_code, filename, 'exec')
+                try:
+                    tree = ast.parse(adjusted_code)
+                    tree = ProgressTransformer(filename).visit(tree)
+                    ast.fix_missing_locations(tree)
+                    compiled = compile(tree, filename, 'exec')
+                except Exception:
+                    compiled = compile(adjusted_code, filename, 'exec')
                 exec(compiled, persistent_globals)
                 send_msg('execute', success=True)
+
+            changed_keys = {k for k, v in persistent_globals.items() if k not in old_ids or old_ids[k] != id(v)}
+            key_to_line = {}
+            try:
+                for node in ast.walk(ast.parse(adjusted_code)):
+                    if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                        changed_keys.add(node.id)
+                        if hasattr(node, 'lineno'):
+                            if node.id not in key_to_line or node.lineno > key_to_line[node.id]:
+                                key_to_line[node.id] = node.lineno
+            except Exception:
+                pass
+
+            line_keys = {}
+            fallback_line = adjusted_code.rstrip().count('\\n') + 1
+            for k in changed_keys:
+                l = key_to_line.get(k, fallback_line)
+                line_keys.setdefault(l, set()).add(k)
+                
+            for l, keys in line_keys.items():
+                summary = get_locals_summary(keys)
+                if summary:
+                    send_msg('hints', line=l-1, text=summary, filename=filename)
         except KeyboardInterrupt:
             print("\\nKeyboardInterrupt", file=sys.stderr)
             send_msg('execute', success=False)
@@ -796,6 +1071,23 @@ while True:
                                             }
                                         }
                                         break;
+                                    case 'hints':
+                                        const hintConfig = getHintsConfig();
+                                        if (hintConfig.get<boolean>('enableInlayHints', true)) {
+                                            const uri = (msg.filename && msg.filename !== '<string>')
+                                                ? vscode.Uri.file(msg.filename).toString()
+                                                : vscode.window.activeTextEditor?.document.uri.toString();
+                                            if (uri) {
+                                                const maxLen = hintConfig.get<number>('maxInlayHintLength', 50);
+                                                let text = msg.text || '';
+                                                if (text.length > maxLen) {
+                                                    text = text.substring(0, maxLen - 3) + '...';
+                                                }
+                                                hintStore.setHint(uri, msg.line, text);
+                                                 hintStore.refreshAllEditors();
+                                            }
+                                        }
+                                        break;
                                 }
                             } catch (e) {
                                 // Fallback for invalid JSON
@@ -917,6 +1209,8 @@ while True:
 
     /** Kill the REPL process if it is running. */
     function stopRepl() {
+        hintStore.clear();
+        hintStore.refreshAllEditors();
         if (currentExecutionCallback) {
             currentExecutionCallback(false);
             currentExecutionCallback = null;
@@ -1926,6 +2220,21 @@ while True:
         }
     });
 
+    // ── Inlay Hints Commands ────────────────────────────────────────────
+
+    const clearInlayHintsCommand = vscode.commands.registerCommand('pylot.clearInlayHints', () => {
+        hintStore.clear();
+        hintStore.refreshAllEditors();
+        vscode.window.showInformationMessage('Pylot: Inlay hints cleared.');
+    });
+
+    const toggleInlayHintsCommand = vscode.commands.registerCommand('pylot.toggleInlayHints', () => {
+        const config = vscode.workspace.getConfiguration('pylot');
+        const currentValue = config.get<boolean>('enableInlayHints', true);
+        config.update('enableInlayHints', !currentValue, vscode.ConfigurationTarget.Global);
+        vscode.window.showInformationMessage(`Pylot: Inlay hints ${!currentValue ? 'enabled' : 'disabled'}.`);
+    });
+
     // ── AI Agent API Commands ───────────────────────────────────────────
 
     const agentAppendAndExecuteCommand = vscode.commands.registerCommand('pylot.agent.appendAndExecute', async (args?: { code: string }) => {
@@ -2151,6 +2460,8 @@ while True:
     context.subscriptions.push(interruptCommand);
     context.subscriptions.push(openFileCommand);
     context.subscriptions.push(linkProvider);
+    context.subscriptions.push(clearInlayHintsCommand);
+    context.subscriptions.push(toggleInlayHintsCommand);
 
     // Agent Subscriptions
     context.subscriptions.push(agentAppendAndExecuteCommand);
