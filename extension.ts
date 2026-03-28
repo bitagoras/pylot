@@ -535,7 +535,7 @@ export function activate(context: vscode.ExtensionContext) {
      * Matplotlib GUI events between commands.
      */
     const replWrapperCode = `
-import sys, json, traceback, os, re
+import sys, json, traceback, os, re, ast, time
 import threading
 import queue
 import builtins
@@ -571,6 +571,7 @@ def get_locals_summary(changed_keys=None):
             if isinstance(val, (types.ModuleType, types.FunctionType, types.MethodType, type)):
                 continue
             s_val = repr(val) if isinstance(val, str) else str(val)
+            s_val = s_val.replace('\\n', ' ')
             if len(s_val) > 100:
                 s_val = s_val[:97] + "..."
             summary.append(f"{name}={s_val}")
@@ -588,7 +589,79 @@ def print_exception_with_links(e):
     lines = traceback.format_exception(exc_type, exc_value, exc_tb)
     sys.stderr.write("".join(lines))
 
-persistent_globals = {'__name__': '__main__', '__doc__': None}
+def make_ast_constant(val):
+    if hasattr(ast, 'Constant'):
+        return ast.Constant(value=val)
+    elif isinstance(val, int):
+        return ast.Num(n=val)
+    elif isinstance(val, str):
+        return ast.Str(s=val)
+    return None
+
+class ProgressTransformer(ast.NodeTransformer):
+    def __init__(self, filename):
+        self.filename = filename
+
+    def get_target_name(self, target):
+        if isinstance(target, ast.Name):
+            return target.id
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            return ", ".join(self.get_target_name(elt) for elt in target.elts)
+        return "var"
+
+    def visit_For(self, node):
+        self.generic_visit(node)
+        func_name = ast.Name(id='_pylot_progress', ctx=ast.Load())
+        line_num = make_ast_constant(node.lineno - 1)
+        fname = make_ast_constant(self.filename)
+        var_name = make_ast_constant(self.get_target_name(node.target))
+        call = ast.Call(func=func_name, args=[node.iter, line_num, fname, var_name], keywords=[])
+        ast.copy_location(call, node.iter)
+        node.iter = call
+        return node
+
+def _pylot_progress(iterable, line_number, filename, var_name="var"):
+    try:
+        total = len(iterable)
+    except Exception:
+        total = None
+
+    start_time = time.time()
+    last_update_time = start_time
+    count = 0
+    last_item = None
+
+    try:
+        for item in iterable:
+            last_item = item
+            count += 1
+            current_time = time.time()
+            if current_time - start_time >= 0.5 and current_time - last_update_time >= 0.5:
+                last_update_time = current_time
+                s_item = repr(item) if isinstance(item, str) else str(item)
+                s_item = s_item.replace('\\n', ' ')
+                if len(s_item) > 80: s_item = s_item[:77] + "..."
+                var_str = f"{var_name}={s_item}"
+                
+                if total:
+                    percent = count / total
+                    bar_len = 25
+                    filled = int(bar_len * percent)
+                    bar = '■' * filled + '□' * (bar_len - filled)
+                    progress_str = f"[{bar}] {int(percent*100)}%, {var_str}"
+                else:
+                    progress_str = var_str
+                send_msg('hints', line=line_number, text=progress_str, filename=filename)
+            yield item
+    finally:
+        if count > 0:
+            s_item = repr(last_item) if isinstance(last_item, str) else str(last_item)
+            s_item = s_item.replace('\\n', ' ')
+            if len(s_item) > 80: s_item = s_item[:77] + "..."
+            final_str = f"{var_name}={s_item}"
+            send_msg('hints', line=line_number, text=final_str, filename=filename)
+
+persistent_globals = {'__name__': '__main__', '__doc__': None, '_pylot_progress': _pylot_progress}
 input_queue = queue.Queue()
 input_reply_queue = queue.Queue()
 
@@ -744,15 +817,15 @@ while True:
         if mpl_mode == 'auto' and 'matplotlib' in adjusted_code:
             force_patch_matplotlib()
 
+        if start_line > 1:
+            adjusted_code = ("\\n" * (start_line - 1)) + adjusted_code
+
         is_expression = False
         try:
             compiled = compile(adjusted_code, filename, 'eval')
             is_expression = True
         except SyntaxError:
             is_expression = False
-
-        if start_line > 1:
-            adjusted_code = ("\\n" * (start_line - 1)) + adjusted_code
 
         try:
             old_ids = {k: id(v) for k, v in persistent_globals.items()}
@@ -771,20 +844,26 @@ while True:
                     send_msg('execute', success=True, datatype=datatype, shape=shape, len=length)
                     
                     res_str = repr(result) if isinstance(result, str) else str(result)
+                    res_str = res_str.replace('\\n', ' ')
                     if len(res_str) > 100: res_str = res_str[:97] + "..."
                     expr_last_line_idx = adjusted_code.rstrip().count('\\n')
                     send_msg('hints', line=expr_last_line_idx, text=res_str, filename=filename)
                 else:
                     send_msg('execute', success=True)
             else:
-                compiled = compile(adjusted_code, filename, 'exec')
+                try:
+                    tree = ast.parse(adjusted_code)
+                    tree = ProgressTransformer(filename).visit(tree)
+                    ast.fix_missing_locations(tree)
+                    compiled = compile(tree, filename, 'exec')
+                except Exception:
+                    compiled = compile(adjusted_code, filename, 'exec')
                 exec(compiled, persistent_globals)
                 send_msg('execute', success=True)
 
             changed_keys = {k for k, v in persistent_globals.items() if k not in old_ids or old_ids[k] != id(v)}
             key_to_line = {}
             try:
-                import ast
                 for node in ast.walk(ast.parse(adjusted_code)):
                     if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
                         changed_keys.add(node.id)

@@ -2,12 +2,12 @@
 
 All notable changes to the **Pylot** extension will be documented in this file.
 
-## [1.5.0] - 2026-03-27
+## [1.5.0] - 2026-03-28
 
 ### New Features
 - **Live Variable Overlay (Inlay Hints)**: Variable values now appear as subtle "ghost text" to the right of executed Python lines. This provides instant feedback without needing to hover or switch to the output panel.
+- **Live For-Loop Progress Bars**: Automatically shows progress bars for long-running `for` loops directly in the editor.
 - **Expression Result Previews**: Executing single expressions (e.g., `1 + 1` or a string) now displays the evaluation result directly in the editor as an inlay hint.
-- **Smart AST-Based Placement**: Hints are intelligently anchored to the specific line where a variable was last modified or referenced within an executed block, rather than just the first line.
 - **Toggle & Clear Commands**: Added `Pylot: Toggle Inlay Hints` and `Pylot: Clear Inlay Hints` to the command palette for easy UI management.
 - **Adjustable Styling**: Added `pylot.inlayHintColor` setting to customize the appearance of the Live Variable Overlay.
 - `pylot.maxInlayHintLength`: Maximum characters for an inlay hint before it is truncated (default: `50`).

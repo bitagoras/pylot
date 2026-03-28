@@ -17,7 +17,8 @@ A VS Code extension that runs Python code directly from the editor using smart s
 - **Execution interruption** – Easily interrupt long-running or stuck code using `Ctrl+Alt+C` without losing your Python state.
 - **Matplotlib support** – Keeps multiple Matplotlib plot windows open and interactive while you continue working.
 - **AI agent integration** – Expose the Python REPL to AI coding agents via a built-in MCP server.
-- **Live Variable Overlay** – See variable values and expression results as subtle inlay hints directly in the editor, anchored to the exact line where they were modified.
+- **Live Variable Overlay** – See variable values and expression results as inlay hints directly in the editor, right after the line where they were modified.
+- **Live For-Loop Progress Bars** – Automatically shows progress bars for long-running `for` loops directly in the editor, like this: `[■■■■■■■■□□□□□□□□□□□□□] 32%, i=4`.
 
 <br>
 
