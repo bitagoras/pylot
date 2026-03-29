@@ -82,6 +82,9 @@ const REPL_STARTUP_TIMEOUT_MS = 5000;
 /** Maximum time (ms) to wait for expression validation via the REPL. */
 const VALIDATION_TIMEOUT_MS = 2000;
 
+/** Maximum time (ms) to wait for an async expression evaluation result. */
+const ASYNC_EVAL_TIMEOUT_MS = 5000;
+
 /** Interval (s) between Matplotlib GUI event pumps in the REPL loop. */
 const MPL_EVENT_PUMP_INTERVAL_S = 0.05;
 
@@ -95,20 +98,48 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     class HintStore {
-        // Map<uri, Map<line, hintText>>
-        private hints = new Map<string, Map<number, string>>();
+        // Map<uri, Map<currentLine, { text, originalLine }>>
+        // originalLine: the line number Python last reported for this hint.
+        // When lines are inserted/deleted above a hint, currentLine shifts but
+        // originalLine stays fixed so stale ghost hints can be detected and
+        // evicted when fresh data arrives from the REPL at the original line.
+        private hints = new Map<string, Map<number, { text: string; originalLine: number }>>();
+
+        private forEachVisiblePythonEditor(callback: (editor: vscode.TextEditor) => void, uri?: string) {
+            vscode.window.visibleTextEditors.forEach(editor => {
+                if (editor.document.languageId !== 'python') {
+                    return;
+                }
+                if (uri && editor.document.uri.toString() !== uri) {
+                    return;
+                }
+                callback(editor);
+            });
+        }
 
         setHint(uri: string, line: number, text: string) {
             let uriMap = this.hints.get(uri);
             if (!uriMap) {
-                uriMap = new Map<number, string>();
+                uriMap = new Map<number, { text: string; originalLine: number }>();
                 this.hints.set(uri, uriMap);
             }
-            uriMap.set(line, text);
+            // If this hint was previously shifted by document edits, its entry
+            // lives at a *different* key (currentLine) but still has
+            // originalLine === line.  Update the text at the shifted position so
+            // the hint stays visually attached to the for-loop, even though the
+            // Python bytecode still reports the old compile-time line number.
+            for (const [existingLine, data] of uriMap.entries()) {
+                if (data.originalLine === line && existingLine !== line) {
+                    uriMap.set(existingLine, { text, originalLine: line });
+                    return;
+                }
+            }
+            // No shifted entry found — store at the reported line as usual.
+            uriMap.set(line, { text, originalLine: line });
         }
 
         getHintsForLine(uri: string, line: number): string | undefined {
-            return this.hints.get(uri)?.get(line);
+            return this.hints.get(uri)?.get(line)?.text;
         }
 
         clear() {
@@ -117,23 +148,37 @@ export function activate(context: vscode.ExtensionContext) {
 
         clearUri(uri: string) {
             this.hints.delete(uri);
-            this.refreshAllEditors();
+            this.refreshEditorsForUri(uri);
         }
 
         deleteHint(uri: string, line: number) {
-            this.hints.get(uri)?.delete(line);
-        }
-
-        getHintsForUri(uri: string): Map<number, string> | undefined {
-            return this.hints.get(uri);
+            const uriMap = this.hints.get(uri);
+            if (!uriMap) return;
+            // Direct key match
+            if (uriMap.has(line)) {
+                uriMap.delete(line);
+                return;
+            }
+            // If the hint was shifted by document edits, its key changed but
+            // originalLine still matches.
+            for (const [existingLine, data] of uriMap.entries()) {
+                if (data.originalLine === line) {
+                    uriMap.delete(existingLine);
+                    return;
+                }
+            }
         }
 
         refreshAllEditors() {
-            vscode.window.visibleTextEditors.forEach(editor => {
-                if (editor.document.languageId === 'python') {
-                    this.applyToEditor(editor);
-                }
+            this.forEachVisiblePythonEditor(editor => {
+                this.applyToEditor(editor);
             });
+        }
+
+        refreshEditorsForUri(uri: string) {
+            this.forEachVisiblePythonEditor(editor => {
+                this.applyToEditor(editor);
+            }, uri);
         }
 
         applyToEditor(editor: vscode.TextEditor) {
@@ -151,15 +196,17 @@ export function activate(context: vscode.ExtensionContext) {
             }
 
             const decorations: vscode.DecorationOptions[] = [];
-            for (const [line, text] of uriMap.entries()) {
+            for (const [line, data] of uriMap.entries()) {
                 if (line >= editor.document.lineCount) continue;
+                // Skip invisible placeholders (empty text from stale-clearing)
+                if (data.text === '') continue;
 
                 const range = new vscode.Range(line, 1000, line, 1000);
                 decorations.push({
                     range,
                     renderOptions: {
                         after: {
-                            contentText: ` → ${text}`
+                            contentText: ` → ${data.text}`
                         }
                     }
                 });
@@ -179,25 +226,26 @@ export function activate(context: vscode.ExtensionContext) {
                 const startLine = change.range.start.line;
                 const endLine = change.range.end.line;
 
-                const newMap = new Map<number, string>();
-                for (const [line, text] of uriMap.entries()) {
+                const newMap = new Map<number, { text: string; originalLine: number }>();
+                for (const [line, data] of uriMap.entries()) {
                     // Clear hints for any line that was directly modified
                     if (line >= startLine && line <= endLine) {
                         continue;
                     }
 
                     if (line > endLine) {
-                        // Shift hints for lines following the edit
-                        newMap.set(line + lineDelta, text);
+                        // Shift the storage key but preserve originalLine so the
+                        // ghost-eviction logic in setHint can still match it.
+                        newMap.set(line + lineDelta, { text: data.text, originalLine: data.originalLine });
                     } else {
                         // Keep hints for lines preceding the edit
-                        newMap.set(line, text);
+                        newMap.set(line, data);
                     }
                 }
                 uriMap = newMap;
                 this.hints.set(uri, uriMap);
             }
-            this.refreshAllEditors();
+            this.refreshEditorsForUri(uri);
         }
     }
 
@@ -817,6 +865,7 @@ while True:
 
         filename = command['filename']
         start_line = command.get('start_line', 1)
+        use_progress = command.get('progress', True)
 
         if mpl_mode == 'auto' and 'matplotlib' in adjusted_code:
             force_patch_matplotlib()
@@ -857,14 +906,15 @@ while True:
             else:
                 try:
                     tree = ast.parse(adjusted_code)
-                    tree = ProgressTransformer(filename).visit(tree)
+                    if use_progress:
+                        tree = ProgressTransformer(filename).visit(tree)
                     ast.fix_missing_locations(tree)
                     compiled = compile(tree, filename, 'exec')
                 except Exception:
                     compiled = compile(adjusted_code, filename, 'exec')
-                exec(compiled, persistent_globals)
-                send_msg('execute', success=True)
-                # Clear stale for-loop hints inside top-level function definitions
+                # Clear stale for-loop hints BEFORE execution so fresh hints
+                # created by _pylot_progress during exec are not immediately
+                # wiped out by the clearing pass.
                 try:
                     for top_node in ast.parse(adjusted_code).body:
                         if isinstance(top_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -873,6 +923,8 @@ while True:
                                     send_msg('hints', line=child.lineno - 1, text='', filename=filename)
                 except Exception:
                     pass
+                exec(compiled, persistent_globals)
+                send_msg('execute', success=True)
 
             changed_keys = {k for k, v in persistent_globals.items() if k not in old_ids or old_ids[k] != id(v)}
             key_to_line = {}
@@ -1099,14 +1151,15 @@ while True:
                                                 : vscode.window.activeTextEditor?.document.uri.toString();
                                             if (uri) {
                                                 const text = msg.text || '';
-                                                if (text === '') {
-                                                    hintStore.deleteHint(uri, msg.line);
-                                                } else {
-                                                    const maxLen = hintConfig.get<number>('maxInlayHintLength', 50);
-                                                    const trimmed = text.length > maxLen ? text.substring(0, maxLen - 3) + '...' : text;
-                                                    hintStore.setHint(uri, msg.line, trimmed);
-                                                }
-                                                hintStore.refreshAllEditors();
+                                                // Always use setHint — even for empty text.
+                                                // An empty-text entry acts as an invisible placeholder
+                                                // that adjustForDocumentChanges still shifts, so when
+                                                // the function is later called with stale bytecode the
+                                                // hint lands at the correct (shifted) line.
+                                                const maxLen = hintConfig.get<number>('maxInlayHintLength', 50);
+                                                const trimmed = text.length > maxLen ? text.substring(0, maxLen - 3) + '...' : text;
+                                                hintStore.setHint(uri, msg.line, trimmed);
+                                                hintStore.refreshEditorsForUri(uri);
                                             }
                                         }
                                         break;
@@ -1301,6 +1354,9 @@ while True:
 
     vscode.window.onDidChangeVisibleTextEditors(editors => {
         for (const editor of editors) {
+            if (editor.document.languageId === 'python') {
+                hintStore.applyToEditor(editor);
+            }
             applyMarkers(editor);
 
             if (runningAnimDocumentUri && editor.document.uri.toString() === runningAnimDocumentUri) {
@@ -1773,6 +1829,7 @@ while True:
             code: JSON.stringify(code),
             filename: editor.document.fileName,
             start_line: executionSelection.start.line + 1,
+            progress: vscode.workspace.getConfiguration('pylot').get<boolean>('enableInlayHints', true),
             ...(resolvedExecCwd ? { cwd: resolvedExecCwd } : {})
         };
 
@@ -2011,13 +2068,23 @@ while True:
                 return;
             }
 
+            let resolved = false;
+            const resolveOnce = (val: { success: boolean; executed: boolean }) => {
+                if (resolved) { return; }
+                resolved = true;
+                asyncExpressionResultCallback = null;
+                resolve(val);
+            };
+
             asyncExpressionResultCallback = (success: boolean, resultText: string, type: string, shape: string, len: string) => {
                 lastExpressionResult = resultText;
                 lastExpressionType = type;
                 lastExpressionShape = shape;
                 lastExpressionLen = len;
-                resolve({ success: success, executed: true });
+                resolveOnce({ success: success, executed: true });
             };
+
+            setTimeout(() => resolveOnce({ success: false, executed: false }), ASYNC_EVAL_TIMEOUT_MS);
 
             pythonRepl.stdin?.write(JSON.stringify(command) + '\n');
         });
@@ -2169,13 +2236,23 @@ while True:
             };
 
             const evalResult = await new Promise<{ success: boolean; executed: boolean }>((resolve) => {
+                let resolved = false;
+                const resolveOnce = (val: { success: boolean; executed: boolean }) => {
+                    if (resolved) { return; }
+                    resolved = true;
+                    asyncExpressionResultCallback = null;
+                    resolve(val);
+                };
+
                 asyncExpressionResultCallback = (success: boolean, resultText: string, type: string, shape: string, len: string) => {
                     lastExpressionResult = resultText;
                     lastExpressionType = type;
                     lastExpressionShape = shape;
                     lastExpressionLen = len;
-                    resolve({ success: success, executed: true });
+                    resolveOnce({ success: success, executed: true });
                 };
+
+                setTimeout(() => resolveOnce({ success: false, executed: false }), ASYNC_EVAL_TIMEOUT_MS);
 
                 pythonRepl?.stdin?.write(JSON.stringify(command) + '\n');
             });
@@ -2381,13 +2458,24 @@ while True:
         };
 
         const result = await new Promise<{ success: boolean; executed: boolean }>((resolve) => {
+            let resolved = false;
+            const resolveOnce = (val: { success: boolean; executed: boolean }) => {
+                if (resolved) { return; }
+                resolved = true;
+                asyncExpressionResultCallback = null;
+                resolve(val);
+            };
+
             asyncExpressionResultCallback = (success: boolean, resultText: string, type: string, shape: string, len: string) => {
                 lastExpressionResult = resultText;
                 lastExpressionType = type;
                 lastExpressionShape = shape;
                 lastExpressionLen = len;
-                resolve({ success: success, executed: true });
+                resolveOnce({ success: success, executed: true });
             };
+
+            setTimeout(() => resolveOnce({ success: false, executed: false }), ASYNC_EVAL_TIMEOUT_MS);
+
             pythonRepl?.stdin?.write(JSON.stringify(command) + '\n');
         });
 
