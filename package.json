@@ -199,7 +199,7 @@
             {
                 "command": "pylot.executeSelectedPython",
                 "key": "shift+enter",
-                "when": "pylotActive && editorTextFocus && editorLangId == python && !isCompositeNotebook && !jupyter.ownsSelection && !notebookEditorFocused && !findInputFocussed && !replaceInputFocussed && !suggestWidgetVisible"
+                "when": "pylotActive && editorTextFocus && editorLangId == python && !isCompositeNotebook && !jupyter.ownsSelection && !notebookEditorFocused && !findInputFocussed && !replaceInputFocussed"
             },
             {
                 "command": "pylot.evaluateExpression",
@@ -209,7 +209,7 @@
             {
                 "command": "pylot.executeSelectedPythonNoMove",
                 "key": "shift+ctrl+enter",
-                "when": "pylotActive && editorTextFocus && editorLangId == python && !isCompositeNotebook && !jupyter.ownsSelection && !notebookEditorFocused && !findInputFocussed && !replaceInputFocussed && !suggestWidgetVisible"
+                "when": "pylotActive && editorTextFocus && editorLangId == python && !isCompositeNotebook && !jupyter.ownsSelection && !notebookEditorFocused && !findInputFocussed && !replaceInputFocussed"
             },
             {
                 "command": "pylot.executeWholeProgram",
