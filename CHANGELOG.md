@@ -2,6 +2,11 @@
 
 All notable changes to the **Pylot** extension will be documented in this file.
 
+## [1.5.1] - 2026-03-29
+
+### Bug Fixes
+- **Variable hints no longer leak across scopes**: Fixed an issue where inlay hints for `for`-loop variables inside a function body would incorrectly display the value of a same-named variable from the outer (global) scope after the function definition was re-executed. Hints for loop variables inside functions are now cleared when the function definition is run.
+
 ## [1.5.0] - 2026-03-28
 
 ### New Features

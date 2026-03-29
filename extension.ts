@@ -120,6 +120,10 @@ export function activate(context: vscode.ExtensionContext) {
             this.refreshAllEditors();
         }
 
+        deleteHint(uri: string, line: number) {
+            this.hints.get(uri)?.delete(line);
+        }
+
         getHintsForUri(uri: string): Map<number, string> | undefined {
             return this.hints.get(uri);
         }
@@ -149,7 +153,7 @@ export function activate(context: vscode.ExtensionContext) {
             const decorations: vscode.DecorationOptions[] = [];
             for (const [line, text] of uriMap.entries()) {
                 if (line >= editor.document.lineCount) continue;
-                
+
                 const range = new vscode.Range(line, 1000, line, 1000);
                 decorations.push({
                     range,
@@ -171,7 +175,7 @@ export function activate(context: vscode.ExtensionContext) {
                 const linesInserted = change.text.split('\n').length - 1;
                 const linesDeleted = change.range.end.line - change.range.start.line;
                 const lineDelta = linesInserted - linesDeleted;
-                
+
                 const startLine = change.range.start.line;
                 const endLine = change.range.end.line;
 
@@ -642,7 +646,7 @@ def _pylot_progress(iterable, line_number, filename, var_name="var"):
                 s_item = s_item.replace('\\n', ' ')
                 if len(s_item) > 80: s_item = s_item[:77] + "..."
                 var_str = f"{var_name}={s_item}"
-                
+
                 if total:
                     percent = count / total
                     bar_len = 25
@@ -842,7 +846,7 @@ while True:
                         except Exception:
                             pass
                     send_msg('execute', success=True, datatype=datatype, shape=shape, len=length)
-                    
+
                     res_str = repr(result) if isinstance(result, str) else str(result)
                     res_str = res_str.replace('\\n', ' ')
                     if len(res_str) > 100: res_str = res_str[:97] + "..."
@@ -860,11 +864,27 @@ while True:
                     compiled = compile(adjusted_code, filename, 'exec')
                 exec(compiled, persistent_globals)
                 send_msg('execute', success=True)
+                # Clear stale for-loop hints inside top-level function definitions
+                try:
+                    for top_node in ast.parse(adjusted_code).body:
+                        if isinstance(top_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            for child in ast.walk(top_node):
+                                if isinstance(child, ast.For) and hasattr(child, 'lineno'):
+                                    send_msg('hints', line=child.lineno - 1, text='', filename=filename)
+                except Exception:
+                    pass
 
             changed_keys = {k for k, v in persistent_globals.items() if k not in old_ids or old_ids[k] != id(v)}
             key_to_line = {}
             try:
-                for node in ast.walk(ast.parse(adjusted_code)):
+                def _walk_top_level(tree):
+                    nodes = list(ast.iter_child_nodes(tree))
+                    while nodes:
+                        node = nodes.pop()
+                        yield node
+                        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                            nodes.extend(ast.iter_child_nodes(node))
+                for node in _walk_top_level(ast.parse(adjusted_code)):
                     if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
                         changed_keys.add(node.id)
                         if hasattr(node, 'lineno'):
@@ -878,7 +898,7 @@ while True:
             for k in changed_keys:
                 l = key_to_line.get(k, fallback_line)
                 line_keys.setdefault(l, set()).add(k)
-                
+
             for l, keys in line_keys.items():
                 summary = get_locals_summary(keys)
                 if summary:
@@ -1078,13 +1098,15 @@ while True:
                                                 ? vscode.Uri.file(msg.filename).toString()
                                                 : vscode.window.activeTextEditor?.document.uri.toString();
                                             if (uri) {
-                                                const maxLen = hintConfig.get<number>('maxInlayHintLength', 50);
-                                                let text = msg.text || '';
-                                                if (text.length > maxLen) {
-                                                    text = text.substring(0, maxLen - 3) + '...';
+                                                const text = msg.text || '';
+                                                if (text === '') {
+                                                    hintStore.deleteHint(uri, msg.line);
+                                                } else {
+                                                    const maxLen = hintConfig.get<number>('maxInlayHintLength', 50);
+                                                    const trimmed = text.length > maxLen ? text.substring(0, maxLen - 3) + '...' : text;
+                                                    hintStore.setHint(uri, msg.line, trimmed);
                                                 }
-                                                hintStore.setHint(uri, msg.line, text);
-                                                 hintStore.refreshAllEditors();
+                                                hintStore.refreshAllEditors();
                                             }
                                         }
                                         break;
@@ -2606,7 +2628,7 @@ while True:
             if (url === '/sse' && method === 'GET') {
                 const sessionId = Date.now().toString() + Math.random().toString(36).substring(2, 7);
                 logMcpDebug(`[Pylot MCP] Establishing SSE connection (session: ${sessionId})...`);
-                
+
                 // Set socket options for immediate delivery
                 req.socket.setNoDelay(true);
                 req.socket.setKeepAlive(true);
@@ -2621,9 +2643,9 @@ while True:
 
                 // Initial endpoint event - include sessionId in the POST URI
                 res.write(`event: endpoint\ndata: /message?sessionId=${sessionId}\n\n`);
-                
+
                 mcpSessions.set(sessionId, res);
-                
+
                 // Heartbeat interval to keep connection alive
                 const heartbeat = setInterval(() => {
                     if (mcpSessions.get(sessionId) === res) {
@@ -2721,10 +2743,10 @@ while True:
                             logMcpDebug(`[Pylot MCP] Sending response via SSE (session: ${sessionId || 'fallback'}, id: ${id})`);
                             // Send via SSE
                             targetSse.write(`event: message\ndata: ${JSON.stringify(response)}\n\n`);
-                            
+
                             // Return 200 OK with empty body to the POST request
                             res.writeHead(200, { 'Content-Type': 'application/json' });
-                            res.end('{}'); 
+                            res.end('{}');
                         } else {
                             // Fallback for simple HTTP IPC (or if SSE wasn't used/found)
                             res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -2791,7 +2813,7 @@ while True:
     const initialMcpConfig = vscode.workspace.getConfiguration('pylot');
     const isMcpEnabled = initialMcpConfig.get<boolean>('mcpServer.enabled', false);
     const mcpPort = initialMcpConfig.get<number>('mcpServer.port', 7822);
-    
+
     logMcpDebug(`[Pylot MCP] Checking settings: enabled=${isMcpEnabled}, port=${mcpPort}`);
 
     if (isMcpEnabled) {
