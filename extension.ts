@@ -784,7 +784,7 @@ def _pylot_progress(iterable, line_number, filename, var_name="var"):
                     percent = count / total
                     bar_len = 25
                     filled = int(bar_len * percent)
-                    bar = '■' * filled + '-' * (bar_len - filled)
+                    bar = '■' * filled + '‐' * (bar_len - filled)
                     progress_str = f"[{bar}] {int(percent*100)}%, {var_str}"
                 else:
                     progress_str = var_str
@@ -1947,7 +1947,7 @@ while True:
             code: JSON.stringify(code),
             filename: editor.document.fileName,
             start_line: executionSelection.start.line + 1,
-            progress: vscode.workspace.getConfiguration('pylot').get<boolean>('enableInlayHints', true),
+            progress: vscode.workspace.getConfiguration('pylot').get<boolean>('enableForLoopLiveUpdates', true),
             ...(resolvedExecCwd ? { cwd: resolvedExecCwd } : {})
         };
 

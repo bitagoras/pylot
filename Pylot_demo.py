@@ -3,7 +3,7 @@
 print("hello world!")
 
 # The value of a single expression line will be printed
-12345678 + 87654321
+1234 + 8765
 
 # The selection doesn't have to cover the whole line.
 multiline = """Multi-line commands without

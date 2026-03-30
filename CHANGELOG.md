@@ -2,6 +2,14 @@
 
 All notable changes to the **Pylot** extension will be documented in this file.
 
+## [1.6.0] - 2026-03-29
+
+### New Features
+- **Optional for-loop live updates**: Added the `pylot.enableForLoopLiveUpdates` setting so users can disable the timer-based `for`-loop progress bar and in-loop variable updates while keeping normal variable inlay hints enabled.
+
+### Improvements
+- **Progressbar style**: To avoid ligature fonts in progress bar: unicode hyphen instead of minus.
+
 ## [1.5.1] - 2026-03-29
 
 ### Bug Fixes

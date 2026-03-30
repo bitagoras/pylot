@@ -1,5 +1,12 @@
 # Pylot – Python code runner
-A VS Code extension that runs Python code directly from the editor using smart selection and visual line markers. It turns your editor into an interactive Python environment to write, run and evaluate Python code at the same time and in one place. Use it as a lightweight and flexible alternative to data science notebooks.
+This VS Code extension enables you to run Python code directly from the editor using smart selection and visual line markers. It turns your editor into an interactive Python environment, letting you to write, run and evaluate Python code simultaneously in one place.
+
+### **Unified workflow**
+Use it as alternative to...
+- **Jupyter notebooks**: Run lines or blocks of code directly from Python scripts to experiment with your data and plot it interactively. This eliminates the need to split the code into cells or to convert it to notebook formats.
+- **Interactive Python console**: Execute single Python commands directly in the editor and save your work afterwards.
+- **Develop or run scripts**: Unifies the writing and execution of Python scripts; run the script step by step as you write.
+- **Debugging**: View the values of variables and expressions while executing code in the global scope, i.e. outside of functions.
 
 ## Features
 
@@ -9,16 +16,16 @@ A VS Code extension that runs Python code directly from the editor using smart s
   - 🟧 Orange (animated): currently running
   - 🟩 Green: successfully executed
   - 🟥 Red: error occurred
-- **Execute whole program** – Run the entire file with `Shift+Ctrl+Alt+Enter`
 - **Pure output window** – Output is displayed in a dedicated panel, without repeating the code.
+- **Run all** – Run the entire file with `Shift+Ctrl+Alt+Enter`
+- **Cell execution** – `Shift+Enter` at a cell comment, which starts with `#%`, executes the entire cell until the next cell comment or the end of the file.
 - **Variable inspection** – Hover over any variable to see its type and current value in a tooltip, even while the code is running. It also shows the length of sized objects and the shape of NumPy arrays.
 - **Expression evaluation** – Pressing `Ctrl+Shift+Space` evaluates any selected expression or variable at the cursor and shows the result in a tooltip.
-- **Cell execution** – `Shift+Enter` at a cell comment, which starts with `#%`, executes the entire cell until the next cell comment or the end of the file.
+- **Live Variable Overlay** – See variable values and expression results as inlay hints directly in the editor, right after the line where they were modified.
+- **For-Loop Progress Bars** – Automatically shows progress bars for long-running `for` loops directly in the editor: `[■■■■■■■■‑‑‑‑‑‑‑‑‑‑‑‑‑] 32%, i=4`.
 - **Execution interruption** – Easily interrupt long-running or stuck code using `Ctrl+Alt+C` without losing your Python state.
 - **Matplotlib support** – Keeps multiple Matplotlib plot windows open and interactive while you continue working.
 - **AI agent integration** – Expose the Python REPL to AI coding agents via a built-in MCP server.
-- **Live Variable Overlay** – See variable values and expression results as inlay hints directly in the editor, right after the line where they were modified.
-- **Live For-Loop Progress Bars** – Automatically shows progress bars for long-running `for` loops directly in the editor: `[■■■■■■■■-------------] 32%, i=4`.
 
 <br>
 
@@ -53,6 +60,7 @@ Pylot provides the following settings to customize its behavior:
 - `pylot.mcpServer.enabled`: Start an internal MCP server so AI coding assistants (e.g. Kilocode, Continue) can call Pylot tools directly via the SSE (Server-Sent Events) transport.
 - `pylot.mcpServer.port`: Port for the MCP server (default: `7822`).
 - `pylot.enableInlayHints`: Globally toggle the live variable inlay hints (default: `true`).
+- `pylot.enableForLoopLiveUpdates`: Controls the timer-based `for` loop instrumentation used for live progress bars and in-loop variable updates. Disabling it keeps the normal post-execution inlay hints (default: `true`).
 - `pylot.maxInlayHintLength`: Maximum characters for an inlay hint before it is truncated (default: `50`).
 - `pylot.inlayHintColor`: Custom color for the variable overlay in hex format (default: `#ffdf0088`).
 
