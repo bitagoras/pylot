@@ -2,6 +2,23 @@
 
 All notable changes to the **Pylot** extension will be documented in this file.
 
+## [1.6.0] - 2026-03-29
+
+### New Features
+- **Optional for-loop live updates**: Added the `pylot.enableForLoopLiveUpdates` setting so users can disable the timer-based `for`-loop progress bar and in-loop variable updates while keeping normal variable inlay hints enabled.
+
+### Improvements
+- **Progressbar style**: To avoid ligature fonts in progress bar: unicode hyphen instead of minus.
+
+## [1.5.1] - 2026-03-29
+
+### Bug Fixes
+- **Variable hints no longer leak across scopes**: Fixed an issue where inlay hints for `for`-loop variables inside a function body would incorrectly display the value of a same-named variable from the outer (global) scope after the function definition was re-executed. Hints for loop variables inside functions are now cleared when the function definition is run.
+- **Shift+Enter no longer triggers Python REPL when Pylot is active**: Removed `!suggestWidgetVisible` from the keybinding condition so Pylot's binding wins over the Python extension's "Run Selection/Line in Python Terminal" command even when an autocompletion popup is visible.
+
+### Improvements
+- **Different stability and efficiency updates**: Reuse of Python parse tree, improved key bindung precedence during startup, clear MCP function feedback status. Progressbar style changed from `[■■□□□]` to `[■■---]`.
+
 ## [1.5.0] - 2026-03-28
 
 ### New Features

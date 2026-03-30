@@ -2,7 +2,7 @@
     "name": "pylot",
     "displayName": "Pylot - Python code runner",
     "description": "Executes lines of Python code with visualized smart selection.",
-    "version": "1.5.0",
+    "version": "1.6.0",
     "publisher": "bitagoras",
     "repository": "https://github.com/bitagoras/pylot",
     "engines": {
@@ -89,6 +89,11 @@
                     "type": "boolean",
                     "default": true,
                     "description": "Pylot: Enable Live Variable Overlay. Shows variable values at the end of executed Python lines using Inlay Hints."
+                },
+                "pylot.enableForLoopLiveUpdates": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Pylot: Enable timer-based live updates for for-loops. Disabling this stops the progress bar and in-loop variable updates, but keeps normal post-execution inlay hints."
                 },
                 "pylot.maxInlayHintLength": {
                     "type": "integer",
@@ -199,7 +204,7 @@
             {
                 "command": "pylot.executeSelectedPython",
                 "key": "shift+enter",
-                "when": "pylotActive && editorTextFocus && editorLangId == python && !isCompositeNotebook && !jupyter.ownsSelection && !notebookEditorFocused && !findInputFocussed && !replaceInputFocussed && !suggestWidgetVisible"
+                "when": "pylotActive && editorTextFocus && editorLangId == python && !isCompositeNotebook && !jupyter.ownsSelection && !notebookEditorFocused && !findInputFocussed && !replaceInputFocussed"
             },
             {
                 "command": "pylot.evaluateExpression",
@@ -209,7 +214,7 @@
             {
                 "command": "pylot.executeSelectedPythonNoMove",
                 "key": "shift+ctrl+enter",
-                "when": "pylotActive && editorTextFocus && editorLangId == python && !isCompositeNotebook && !jupyter.ownsSelection && !notebookEditorFocused && !findInputFocussed && !replaceInputFocussed && !suggestWidgetVisible"
+                "when": "pylotActive && editorTextFocus && editorLangId == python && !isCompositeNotebook && !jupyter.ownsSelection && !notebookEditorFocused && !findInputFocussed && !replaceInputFocussed"
             },
             {
                 "command": "pylot.executeWholeProgram",
