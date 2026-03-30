@@ -2049,7 +2049,7 @@ while True:
 
     // ── Execute Whole Program ───────────────────────────────────────────
 
-    async function executeWholeProgram(editor: vscode.TextEditor): Promise<void> {
+    async function runWholeFile(editor: vscode.TextEditor): Promise<void> {
         await executeSelectedPython(editor, false, true);
     }
 
@@ -2092,10 +2092,10 @@ while True:
         await executeSelectedPython(editor, false);
     });
 
-    const executeWholeCommand = vscode.commands.registerCommand('pylot.executeWholeProgram', async () => {
+    const executeWholeCommand = vscode.commands.registerCommand('pylot.runWholeFile', async () => {
         const editor = vscode.window.activeTextEditor;
         if (!editor) { return; }
-        await executeWholeProgram(editor);
+        await runWholeFile(editor);
     });
 
     const clearOutputCommand = vscode.commands.registerCommand('pylot.clearOutput', () => {

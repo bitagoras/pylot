@@ -3,14 +3,14 @@ This VS Code extension enables you to run Python code directly from the editor u
 
 ### **Unified workflow**
 Use it as alternative to...
-- **Jupyter notebooks**: Run lines or blocks of code directly from Python scripts to experiment with your data and plot it interactively. This eliminates the need to split the code into cells or to convert it to notebook formats.
+- **Jupyter notebooks**: Run lines or blocks of code directly from Python scripts to experiment with your data and plot it interactively. This eliminates the need of cells, notebook formats and conversions.
 - **Interactive Python console**: Execute single Python commands directly in the editor and save your work afterwards.
-- **Develop or run scripts**: Unifies the writing and execution of Python scripts; run the script step by step as you write.
-- **Debugging**: View the values of variables and expressions while executing code in the global scope, i.e. outside of functions.
+- **Either develop or run scripts**: Unifies the writing and execution of Python scripts; run the script step by step as you write.
+- **Debugging**: View the values of variables and expressions while executing code of the global scope (i.e. outside of functions).
 
 ## Features
 
-- **Execute Python code** – Run selected code or the current line with `Shift+Enter`.
+- **Execute Python code** – Run selected code or the current line with `Shift+Enter` and advance the cursor.
 - **Smart selection** – Selection will be expanded to execute only full valid Python statements or blocks.
 - **Visual line markers** – Line markers show the selection and execution state:
   - 🟧 Orange (animated): currently running
@@ -26,6 +26,7 @@ Use it as alternative to...
 - **Execution interruption** – Easily interrupt long-running or stuck code using `Ctrl+Alt+C` without losing your Python state.
 - **Matplotlib support** – Keeps multiple Matplotlib plot windows open and interactive while you continue working.
 - **AI agent integration** – Expose the Python REPL to AI coding agents via a built-in MCP server.
+- **Editor toolbar buttons** – Three run buttons appear in the top-right editor toolbar: ▶ (run, keep cursor), ▶| (run and advance cursor), ▶▶ (run whole file).
 
 <br>
 
@@ -63,6 +64,7 @@ Pylot provides the following settings to customize its behavior:
 - `pylot.enableForLoopLiveUpdates`: Controls the timer-based `for` loop instrumentation used for live progress bars and in-loop variable updates. Disabling it keeps the normal post-execution inlay hints (default: `true`).
 - `pylot.maxInlayHintLength`: Maximum characters for an inlay hint before it is truncated (default: `50`).
 - `pylot.inlayHintColor`: Custom color for the variable overlay in hex format.
+- `pylot.showEditorTitleButtons`: Show or hide the ▶ ▶| ▶▶ run buttons in the editor toolbar for Python files (default: `true`). Individual buttons can be hidden per VS Code's built-in right-click menu.
 
 ## Requirements
 
