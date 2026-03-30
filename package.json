@@ -2,7 +2,7 @@
     "name": "pylot",
     "displayName": "Pylot - Python code runner",
     "description": "Executes lines of Python code with visualized smart selection.",
-    "version": "1.6.0",
+    "version": "1.7.0",
     "publisher": "bitagoras",
     "repository": "https://github.com/bitagoras/pylot",
     "engines": {
@@ -106,21 +106,38 @@
                     "type": "string",
                     "default": "#5588ff77",
                     "description": "Pylot: Color for the Live Variable Overlay (CSS hex, e.g. #5588ff77)."
+                },
+                "pylot.showEditorTitleButtons": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Pylot: Show run buttons (▶  ▶|  ▶▶) in the top-right editor toolbar for Python files. Individual buttons can be hidden by right-clicking them."
                 }
             }
         },
         "commands": [
             {
                 "command": "pylot.executeSelectedPython",
-                "title": "Pylot: Execute Selected Python"
+                "title": "Pylot: Execute Selected Python",
+                "icon": {
+                    "light": "resources/icons/run-move-light.svg",
+                    "dark": "resources/icons/run-move-dark.svg"
+                }
             },
             {
                 "command": "pylot.executeSelectedPythonNoMove",
-                "title": "Pylot: Execute Selected Python (No Cursor Move)"
+                "title": "Pylot: Execute Selected Python (No Cursor Move)",
+                "icon": {
+                    "light": "resources/icons/run-light.svg",
+                    "dark": "resources/icons/run-dark.svg"
+                }
             },
             {
-                "command": "pylot.executeWholeProgram",
-                "title": "Pylot: Execute Whole Python Program"
+                "command": "pylot.runWholeFile",
+                "title": "Pylot: Run Whole Python File",
+                "icon": {
+                    "light": "resources/icons/run-all-light.svg",
+                    "dark": "resources/icons/run-all-dark.svg"
+                }
             },
             {
                 "command": "pylot.startPython",
@@ -172,6 +189,23 @@
             }
         ],
         "menus": {
+            "editor/title": [
+                {
+                    "command": "pylot.executeSelectedPythonNoMove",
+                    "when": "pylotActive && editorLangId == python && config.pylot.showEditorTitleButtons",
+                    "group": "navigation@8"
+                },
+                {
+                    "command": "pylot.executeSelectedPython",
+                    "when": "pylotActive && editorLangId == python && config.pylot.showEditorTitleButtons",
+                    "group": "navigation@9"
+                },
+                {
+                    "command": "pylot.runWholeFile",
+                    "when": "pylotActive && editorLangId == python && config.pylot.showEditorTitleButtons",
+                    "group": "navigation@10"
+                }
+            ],
             "commandPalette": [
                 {
                     "command": "pylot.agent.appendAndExecute",
@@ -217,7 +251,7 @@
                 "when": "pylotActive && editorTextFocus && editorLangId == python && !isCompositeNotebook && !jupyter.ownsSelection && !notebookEditorFocused && !findInputFocussed && !replaceInputFocussed"
             },
             {
-                "command": "pylot.executeWholeProgram",
+                "command": "pylot.runWholeFile",
                 "key": "shift+ctrl+alt+enter",
                 "when": "pylotActive && editorTextFocus && editorLangId == python && !isCompositeNotebook && !jupyter.ownsSelection && !notebookEditorFocused && !findInputFocussed && !replaceInputFocussed && !suggestWidgetVisible"
             },

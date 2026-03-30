@@ -2,7 +2,16 @@
 
 All notable changes to the **Pylot** extension will be documented in this file.
 
-## [1.6.0] - 2026-03-29
+## [1.7.0] - 2026-03-31
+
+### New Features
+- **Editor toolbar run buttons**: Three icon buttons now appear in the top-right editor toolbar for Python files:
+  - ▶ (*Execute, no cursor move*) – run the block at the cursor without advancing
+  - ▶| (*Execute and advance cursor*) – run the block and move the cursor to the next block
+  - ▶▶ (*Run whole program*) – execute the entire file
+- **`pylot.showEditorTitleButtons`**: Single setting (default `true`) to show or hide all toolbar buttons at once. Individual buttons can also be hidden via VS Code's built-in right-click → *Hide* mechanism.
+
+## [1.6.0] - 2026-03-30
 
 ### New Features
 - **Optional for-loop live updates**: Added the `pylot.enableForLoopLiveUpdates` setting so users can disable the timer-based `for`-loop progress bar and in-loop variable updates while keeping normal variable inlay hints enabled.
