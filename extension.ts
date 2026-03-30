@@ -35,6 +35,14 @@ interface PythonExtensionApi {
     };
 }
 
+type ExecutionStatus = 'idle' | 'running' | 'succeeded' | 'failed' | 'rejected';
+
+interface ExecutionResult {
+    success: boolean;
+    executed: boolean;
+    status: ExecutionStatus;
+}
+
 // ── Module-level state ──────────────────────────────────────────────────────
 
 let pythonRepl: ChildProcess | null = null;
@@ -43,6 +51,7 @@ let currentPythonPath: string | undefined = undefined;
 let currentExecutionCallback: ((success: boolean) => void) | null = null;
 let validationCallback: ((isValid: boolean) => void) | null = null;
 let outputChannel: vscode.OutputChannel;
+let lastExecutionResult: ExecutionResult = { success: false, executed: false, status: 'idle' };
 let lastExpressionResult: string = '';
 let lastExpressionType: string = '';
 let lastExpressionShape: string = '';
@@ -68,6 +77,12 @@ function logMcpDebug(message: string): void {
         outputChannel.appendLine(`[Pylot MCP DEBUG] ${message}`);
     }
 }
+
+function setLastExecutionResult(status: ExecutionStatus, success: boolean, executed: boolean): ExecutionResult {
+    lastExecutionResult = { status, success, executed };
+    return lastExecutionResult;
+}
+
 let runningAnimTimer: ReturnType<typeof setInterval> | null = null;
 let pendingOutputShow = false;
 let replStartPromise: Promise<boolean> | null = null;
@@ -91,6 +106,11 @@ const MPL_EVENT_PUMP_INTERVAL_S = 0.05;
 // ── Activation ──────────────────────────────────────────────────────────────
 
 export function activate(context: vscode.ExtensionContext) {
+    // Set context keys immediately so keybinding when-clauses resolve before
+    // any other extension's competing bindings can fire.
+    vscode.commands.executeCommand('setContext', 'pylotActive', true);
+    vscode.commands.executeCommand('setContext', 'pylotMarkerActive', true);
+
     // ── Inlay Hint Management ───────────────────────────────────────────
 
     function getHintsConfig() {
@@ -117,7 +137,7 @@ export function activate(context: vscode.ExtensionContext) {
             });
         }
 
-        setHint(uri: string, line: number, text: string) {
+        setHint(uri: string, line: number, text: string): boolean {
             let uriMap = this.hints.get(uri);
             if (!uriMap) {
                 uriMap = new Map<number, { text: string; originalLine: number }>();
@@ -130,12 +150,16 @@ export function activate(context: vscode.ExtensionContext) {
             // Python bytecode still reports the old compile-time line number.
             for (const [existingLine, data] of uriMap.entries()) {
                 if (data.originalLine === line && existingLine !== line) {
+                    if (data.text === text) { return false; }
                     uriMap.set(existingLine, { text, originalLine: line });
-                    return;
+                    return true;
                 }
             }
             // No shifted entry found — store at the reported line as usual.
+            const existing = uriMap.get(line);
+            if (existing && existing.text === text) { return false; }
             uriMap.set(line, { text, originalLine: line });
+            return true;
         }
 
         getHintsForLine(uri: string, line: number): string | undefined {
@@ -289,8 +313,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
     }, null, context.subscriptions);
 
-    vscode.commands.executeCommand('setContext', 'pylotMarkerActive', true);
-    vscode.commands.executeCommand('setContext', 'pylotActive', true);
+    // (pylotActive and pylotMarkerActive are already set at the top of activate())
 
     outputChannel = vscode.window.createOutputChannel("pylot");
 
@@ -672,6 +695,68 @@ class ProgressTransformer(ast.NodeTransformer):
         node.iter = call
         return node
 
+def clear_function_for_loop_hints(tree, filename):
+    for top_node in tree.body:
+        if isinstance(top_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for child in ast.walk(top_node):
+                if isinstance(child, ast.For) and hasattr(child, 'lineno'):
+                    send_msg('hints', line=child.lineno - 1, text='', filename=filename)
+
+def get_changed_keys_and_lines(tree, fallback_line):
+    changed_keys = set()
+    key_to_line = {}
+
+    def record_store_name(name, lineno):
+        changed_keys.add(name)
+        if lineno is not None and (name not in key_to_line or lineno > key_to_line[name]):
+            key_to_line[name] = lineno
+
+    class AssignmentTracker(ast.NodeVisitor):
+        def visit_Name(self, node):
+            if isinstance(node.ctx, ast.Store):
+                record_store_name(node.id, getattr(node, 'lineno', None))
+
+        def visit_FunctionDef(self, node):
+            record_store_name(node.name, getattr(node, 'lineno', None))
+
+        def visit_AsyncFunctionDef(self, node):
+            record_store_name(node.name, getattr(node, 'lineno', None))
+
+        def visit_ClassDef(self, node):
+            record_store_name(node.name, getattr(node, 'lineno', None))
+
+        def visit_Import(self, node):
+            for alias in node.names:
+                record_store_name(alias.asname or alias.name.split('.', 1)[0], getattr(node, 'lineno', None))
+
+        def visit_ImportFrom(self, node):
+            for alias in node.names:
+                if alias.name == '*':
+                    continue
+                record_store_name(alias.asname or alias.name, getattr(node, 'lineno', None))
+
+        def visit_ExceptHandler(self, node):
+            if node.name:
+                record_store_name(node.name, getattr(node, 'lineno', None))
+            self.generic_visit(node)
+
+        def visit_Global(self, node):
+            for name in node.names:
+                changed_keys.add(name)
+
+        def visit_Nonlocal(self, node):
+            for name in node.names:
+                changed_keys.add(name)
+
+    AssignmentTracker().visit(tree)
+
+    line_keys = {}
+    for key in changed_keys:
+        line_no = key_to_line.get(key, fallback_line)
+        line_keys.setdefault(line_no, set()).add(key)
+
+    return changed_keys, line_keys
+
 def _pylot_progress(iterable, line_number, filename, var_name="var"):
     try:
         total = len(iterable)
@@ -699,7 +784,7 @@ def _pylot_progress(iterable, line_number, filename, var_name="var"):
                     percent = count / total
                     bar_len = 25
                     filled = int(bar_len * percent)
-                    bar = '■' * filled + '□' * (bar_len - filled)
+                    bar = '■' * filled + '-' * (bar_len - filled)
                     progress_str = f"[{bar}] {int(percent*100)}%, {var_str}"
                 else:
                     progress_str = var_str
@@ -882,6 +967,8 @@ while True:
 
         try:
             old_ids = {k: id(v) for k, v in persistent_globals.items()}
+            fallback_line = adjusted_code.rstrip().count('\\n') + 1
+            line_keys = {}
             if is_expression:
                 result = eval(compiled, persistent_globals)
                 if result is not None:
@@ -906,50 +993,23 @@ while True:
             else:
                 try:
                     tree = ast.parse(adjusted_code)
+                    clear_function_for_loop_hints(tree, filename)
+                    _, line_keys = get_changed_keys_and_lines(tree, fallback_line)
                     if use_progress:
                         tree = ProgressTransformer(filename).visit(tree)
                     ast.fix_missing_locations(tree)
                     compiled = compile(tree, filename, 'exec')
                 except Exception:
                     compiled = compile(adjusted_code, filename, 'exec')
-                # Clear stale for-loop hints BEFORE execution so fresh hints
-                # created by _pylot_progress during exec are not immediately
-                # wiped out by the clearing pass.
-                try:
-                    for top_node in ast.parse(adjusted_code).body:
-                        if isinstance(top_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                            for child in ast.walk(top_node):
-                                if isinstance(child, ast.For) and hasattr(child, 'lineno'):
-                                    send_msg('hints', line=child.lineno - 1, text='', filename=filename)
-                except Exception:
-                    pass
                 exec(compiled, persistent_globals)
                 send_msg('execute', success=True)
 
             changed_keys = {k for k, v in persistent_globals.items() if k not in old_ids or old_ids[k] != id(v)}
-            key_to_line = {}
-            try:
-                def _walk_top_level(tree):
-                    nodes = list(ast.iter_child_nodes(tree))
-                    while nodes:
-                        node = nodes.pop()
-                        yield node
-                        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                            nodes.extend(ast.iter_child_nodes(node))
-                for node in _walk_top_level(ast.parse(adjusted_code)):
-                    if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
-                        changed_keys.add(node.id)
-                        if hasattr(node, 'lineno'):
-                            if node.id not in key_to_line or node.lineno > key_to_line[node.id]:
-                                key_to_line[node.id] = node.lineno
-            except Exception:
-                pass
-
-            line_keys = {}
-            fallback_line = adjusted_code.rstrip().count('\\n') + 1
+            mapped_keys = set().union(*line_keys.values()) if line_keys else set()
             for k in changed_keys:
-                l = key_to_line.get(k, fallback_line)
-                line_keys.setdefault(l, set()).add(k)
+                if k not in mapped_keys:
+                    line_keys.setdefault(fallback_line, set()).add(k)
+                    mapped_keys.add(k)
 
             for l, keys in line_keys.items():
                 summary = get_locals_summary(keys)
@@ -983,9 +1043,15 @@ while True:
 
         replStartPromise = new Promise((resolve) => {
             let resolved = false;
+            let startupTimeout: ReturnType<typeof setTimeout> | null = null;
+            let startupTimedOut = false;
             const resolveOnce = (value: boolean) => {
                 if (resolved) return;
                 resolved = true;
+                if (startupTimeout) {
+                    clearTimeout(startupTimeout);
+                    startupTimeout = null;
+                }
                 replStartPromise = null;
                 resolve(value);
             };
@@ -1046,19 +1112,19 @@ while True:
                 }
 
                 logDebug(`[startPython] Spawning REPL process with cwd: ${cwd}`);
-                const currentProcess = spawn(pythonPath, ['-u', '-c', replWrapperCode], {
+                const startupProcess = spawn(pythonPath, ['-u', '-c', replWrapperCode], {
                     env: env,
                     cwd: cwd
                 });
-                pythonRepl = currentProcess;
+                pythonRepl = startupProcess;
 
                 replReady = false;
                 currentPythonPath = pythonPath;
 
                 let stdoutBuffer = '';
 
-                currentProcess.stdout?.on('data', (data) => {
-                    if (pythonRepl !== currentProcess) return;
+                startupProcess.stdout?.on('data', (data) => {
+                    if (pythonRepl !== startupProcess) return;
 
                     stdoutBuffer += data.toString();
 
@@ -1086,6 +1152,10 @@ while True:
 
                                 switch (msg.type) {
                                     case 'ready':
+                                        if (startupTimedOut) {
+                                            logDebug('[startPython] Ignoring late ready message after startup timeout.');
+                                            break;
+                                        }
                                         replReady = true;
                                         currentPythonVersion = msg.version || '';
                                         resolveOnce(true);
@@ -1158,8 +1228,9 @@ while True:
                                                 // hint lands at the correct (shifted) line.
                                                 const maxLen = hintConfig.get<number>('maxInlayHintLength', 50);
                                                 const trimmed = text.length > maxLen ? text.substring(0, maxLen - 3) + '...' : text;
-                                                hintStore.setHint(uri, msg.line, trimmed);
-                                                hintStore.refreshEditorsForUri(uri);
+                                                if (hintStore.setHint(uri, msg.line, trimmed)) {
+                                                    hintStore.refreshEditorsForUri(uri);
+                                                }
                                             }
                                         }
                                         break;
@@ -1180,8 +1251,8 @@ while True:
                     }
                 });
 
-                currentProcess.stderr?.on('data', (data) => {
-                    if (pythonRepl !== currentProcess) return;
+                startupProcess.stderr?.on('data', (data) => {
+                    if (pythonRepl !== startupProcess) return;
 
                     const stderrText = data.toString();
                     if (stderrText) {
@@ -1191,8 +1262,8 @@ while True:
                     }
                 });
 
-                currentProcess.on('close', (code) => {
-                    if (pythonRepl !== currentProcess) {
+                startupProcess.on('close', (code) => {
+                    if (pythonRepl !== startupProcess) {
                         logDebug(`[startPython] Old REPL process closed with code: ${code}`);
                         return;
                     }
@@ -1217,8 +1288,8 @@ while True:
                     }
                 });
 
-                currentProcess.on('error', (err: any) => {
-                    if (pythonRepl !== currentProcess) {
+                startupProcess.on('error', (err: any) => {
+                    if (pythonRepl !== startupProcess) {
                         logDebug(`[startPython] Old REPL process error: ${err.code || 'unknown'}`);
                         return;
                     }
@@ -1257,7 +1328,15 @@ while True:
                 });
 
                 // Timeout if REPL doesn't become ready
-                setTimeout(() => {
+                startupTimeout = setTimeout(() => {
+                    startupTimedOut = true;
+                    if (pythonRepl === startupProcess) {
+                        // Disassociate this startup process first so late stdout messages are ignored.
+                        pythonRepl = null;
+                        replReady = false;
+                    }
+                    logDebug(`[startPython] REPL startup timed out after ${REPL_STARTUP_TIMEOUT_MS}ms; terminating process.`);
+                    startupProcess.kill();
                     resolveOnce(false);
                 }, REPL_STARTUP_TIMEOUT_MS);
 
@@ -1417,14 +1496,15 @@ while True:
      * Send a code block to the REPL and track its execution via line
      * decorations. Resolves with `{ success, executed }`.
      */
-    function executeInRepl(command: any, editor: vscode.TextEditor, trimmedRange: vscode.Range, canExecute: boolean): Promise<{ success: boolean; executed: boolean }> {
+    function executeInRepl(command: any, editor: vscode.TextEditor, trimmedRange: vscode.Range, canExecute: boolean): Promise<ExecutionResult> {
         return new Promise((resolve) => {
             if (!canExecute) {
-                resolve({ success: false, executed: false });
+                resolve(setLastExecutionResult('rejected', false, false));
                 return;
             }
 
             pendingOutputShow = true;
+            setLastExecutionResult('running', false, false);
 
             const style = getMarkerStyle();
 
@@ -1437,7 +1517,7 @@ while True:
                 if (style !== 'off') {
                     addMarker(editor, trimmedRange, !execSuccess);
                 }
-                resolve({ success: execSuccess, executed: true });
+                resolve(setLastExecutionResult(execSuccess ? 'succeeded' : 'failed', execSuccess, true));
             };
 
             agentOutputBuffer = ''; // Clear buffer before new execution
@@ -1553,9 +1633,9 @@ while True:
      *
      * @param moveCursor If true, advance the cursor past the executed block.
      */
-    async function executeSelectedPython(editor: vscode.TextEditor, moveCursor: boolean, wholeProgram: boolean = false): Promise<void> {
+    async function executeSelectedPython(editor: vscode.TextEditor, moveCursor: boolean, wholeProgram: boolean = false): Promise<ExecutionResult> {
         const pythonPath = await getPythonPath();
-        if (!pythonPath) { return; }
+        if (!pythonPath) { return setLastExecutionResult('rejected', false, false); }
 
         // For untitled files, we may not have document symbols yet.
         const isUntitled = editor.document.uri.scheme === 'untitled';
@@ -1574,7 +1654,7 @@ while True:
             if (!success) {
                 // The detailed error message is already shown in the output channel
                 vscode.window.showErrorMessage('Pylot: Failed to start Python REPL. Please check the "Pylot" output panel for details and review your Python interpreter settings and `pylot.replWorkingDirectory`.');
-                return;
+                return setLastExecutionResult('rejected', false, false);
             }
         }
         let initialStartLine = editor.selection.start.line;
@@ -1582,7 +1662,7 @@ while True:
 
         if (wholeProgram) {
             const bounds = getCodeBounds(editor.document);
-            if (bounds.lastCodeLine < bounds.firstCodeLine) return; // Empty file
+            if (bounds.lastCodeLine < bounds.firstCodeLine) return setLastExecutionResult('rejected', false, false); // Empty file
             initialStartLine = bounds.firstCodeLine;
             initialEndLine = bounds.lastCodeLine;
         } else {
@@ -1659,7 +1739,7 @@ while True:
                 if (moveCursor && cellTargetLine >= 0) {
                     moveCursorToLine(editor, cellTargetLine);
                 }
-                return;
+                return setLastExecutionResult('rejected', false, false);
             }
 
             if (editor.selection.isEmpty) {
@@ -1693,7 +1773,7 @@ while True:
                         moveCursorToLine(editor, nextLine);
                     }
                 }
-                return;
+                return setLastExecutionResult('rejected', false, false);
             }
         }
 
@@ -1730,6 +1810,44 @@ while True:
                     // We must peek ahead to the next line and check if it's structurally
                     // a child of our first line.
                     const { firstCodeLine, lastCodeLine } = getCodeBounds(editor.document);
+
+                    // ── Guard: Shallow hierarchy (LS not yet ready) ─────────
+                    // When Pylance is initialising, SelectionRange chains can be
+                    // very shallow — jumping from a single-line statement directly
+                    // to the Module root with no intermediate block nodes.
+                    // getTopBlock then returns the full file, which would execute
+                    // the entire script instead of just the cursor's block.
+                    //
+                    // For EACH query position independently: if getTopBlock
+                    // returned a full-file range AND there are no intermediate
+                    // multi-line nodes in that chain (other than the Module root
+                    // itself), abort execution.
+                    const isShallowFullFile = (blockRange: vscode.Range, chainRoot: any): boolean => {
+                        if (!(blockRange.start.line <= firstCodeLine && blockRange.end.line >= lastCodeLine)) {
+                            return false; // didn't expand to full file
+                        }
+                        let node = chainRoot;
+                        while (node) {
+                            const r = node.range;
+                            const isMultiLine = r.start.line !== r.end.line;
+                            const isModuleRoot = r.start.line <= firstCodeLine && r.end.line >= lastCodeLine;
+                            if (isMultiLine && !isModuleRoot) {
+                                return false; // legitimate intermediate block exists
+                            }
+                            node = node.parent;
+                        }
+                        return true; // no intermediate blocks — shallow hierarchy
+                    };
+
+                    const shallowStart = isShallowFullFile(startBlockRange, ranges[0]);
+                    const shallowEnd = ranges.length > 1 && isShallowFullFile(endBlockRange, ranges[1]);
+                    if (shallowStart || shallowEnd) {
+                        logDebug(`[executeSelectedPython] Full-file expansion with shallow hierarchy (LS not ready?). Aborting. ` +
+                            `start=${startBlockRange.start.line + 1}-${startBlockRange.end.line + 1}, ` +
+                            `end=${endBlockRange.start.line + 1}-${endBlockRange.end.line + 1}, ` +
+                            `shallowStart=${shallowStart}, shallowEnd=${shallowEnd}`);
+                        return setLastExecutionResult('rejected', false, false);
+                    }
 
                     // Only apply if the selection spans exactly the first code line, AND the active cursor is actually on that line.
                     if (executionSelection.start.line === firstCodeLine &&
@@ -1788,7 +1906,7 @@ while True:
                             // error in the REPL.
                             if (!peekSucceeded && nextLineIsChild) {
                                 logDebug(`[executeSelectedPython] Peek-Ahead found no valid block (LS not ready?). Aborting to avoid sending incomplete statement.`);
-                                return;
+                                return setLastExecutionResult('rejected', false, false);
                             }
                         }
                     }
@@ -1808,7 +1926,7 @@ while True:
                 new vscode.Position(initialEndLine, editor.document.lineAt(initialEndLine).text.length)
             );
             if (executionSelection.isEmpty) {
-                return;
+                return setLastExecutionResult('rejected', false, false);
             }
         }
 
@@ -1891,6 +2009,8 @@ while True:
             editor.selection = emptySelection;
             editor.revealRange(emptySelection);
         }
+
+        return result;
     }
 
     // ── Expression evaluation ───────────────────────────────────────────
@@ -2383,13 +2503,16 @@ while True:
         editor.revealRange(editor.selection);
 
         // Execute
-        await executeSelectedPython(editor, false);
+        let executionResult: ExecutionResult;
+        try {
+            executionResult = await executeSelectedPython(editor, false);
+        } finally {
+            // Restore selection
+            editor.selection = originalSelection;
+            editor.revealRange(editor.selection);
+        }
 
-        // Restore selection
-        editor.selection = originalSelection;
-        editor.revealRange(editor.selection);
-
-        return { success: lastExpressionResult !== '' || currentExecutionCallback === null /* Hacky way to guess success */, output: agentOutputBuffer };
+        return { success: executionResult.success, executed: executionResult.executed, status: executionResult.status, output: agentOutputBuffer };
     });
 
     const agentExecuteRangeCommand = vscode.commands.registerCommand('pylot.agent.executeRange', async (args?: { startLine: number, endLine: number }) => {
@@ -2417,16 +2540,19 @@ while True:
         editor.selection = new vscode.Selection(startPos, endPos);
         editor.revealRange(editor.selection);
 
-        await executeSelectedPython(editor, false);
+        let executionResult: ExecutionResult;
+        try {
+            executionResult = await executeSelectedPython(editor, false);
+        } finally {
+            editor.selection = originalSelection;
+            editor.revealRange(editor.selection);
+        }
 
-        editor.selection = originalSelection;
-        editor.revealRange(editor.selection);
-
-        return { success: currentExecutionCallback === null, output: agentOutputBuffer };
+        return { success: executionResult.success, executed: executionResult.executed, status: executionResult.status, output: agentOutputBuffer };
     });
 
     const agentGetExecutionStatusCommand = vscode.commands.registerCommand('pylot.agent.getExecutionStatus', () => {
-        return { ready: replReady, running: currentExecutionCallback !== null };
+        return { ready: replReady, running: currentExecutionCallback !== null, lastExecution: lastExecutionResult };
     });
 
     // Alias evaluateExpression, but parse args to support agent execution

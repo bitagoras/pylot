@@ -8,6 +8,9 @@ All notable changes to the **Pylot** extension will be documented in this file.
 - **Variable hints no longer leak across scopes**: Fixed an issue where inlay hints for `for`-loop variables inside a function body would incorrectly display the value of a same-named variable from the outer (global) scope after the function definition was re-executed. Hints for loop variables inside functions are now cleared when the function definition is run.
 - **Shift+Enter no longer triggers Python REPL when Pylot is active**: Removed `!suggestWidgetVisible` from the keybinding condition so Pylot's binding wins over the Python extension's "Run Selection/Line in Python Terminal" command even when an autocompletion popup is visible.
 
+### Improvements
+- **Different stability and efficiency updates**: Reuse of Python parse tree, improved key bindung precedence during startup, clear MCP function feedback status. Progressbar style changed from `[■■□□□]` to `[■■---]`.
+
 ## [1.5.0] - 2026-03-28
 
 ### New Features

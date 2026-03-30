@@ -18,7 +18,7 @@ A VS Code extension that runs Python code directly from the editor using smart s
 - **Matplotlib support** – Keeps multiple Matplotlib plot windows open and interactive while you continue working.
 - **AI agent integration** – Expose the Python REPL to AI coding agents via a built-in MCP server.
 - **Live Variable Overlay** – See variable values and expression results as inlay hints directly in the editor, right after the line where they were modified.
-- **Live For-Loop Progress Bars** – Automatically shows progress bars for long-running `for` loops directly in the editor, like this: `[■■■■■■■■□□□□□□□□□□□□□] 32%, i=4`.
+- **Live For-Loop Progress Bars** – Automatically shows progress bars for long-running `for` loops directly in the editor: `[■■■■■■■■-------------] 32%, i=4`.
 
 <br>
 
@@ -65,7 +65,7 @@ Pylot provides the following settings to customize its behavior:
 1. Open **Extensions** in VS Code (`Ctrl+Shift+X`).
 2. Search for **Pylot** and click **Install**.
 3. The required Python extension (`ms-python.python`) will be installed automatically.
-4. If other Python extensions have claimed `Shift+Enter`, `Ctrl+Shift+Enter` or `Shift+Ctrl+Alt+Enter` in precedence, you may need to remove those bindings:
+4. If other Python extensions have claimed `Shift+Enter`, `Ctrl+Shift+Enter` or `Shift+Ctrl+Alt+Enter` in precedence, Pylot tries to have priority in Python files. In case other Python REPLs are triggered, you need to remove those bindings:
    - Open the command palette (`Ctrl+Shift+P`) → **Preferences: Open Keyboard Shortcuts**.
    - Search for the conflicting shortcut and remove or reassign it.
 
