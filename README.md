@@ -62,7 +62,7 @@ Pylot provides the following settings to customize its behavior:
 - `pylot.enableInlayHints`: Globally toggle the live variable inlay hints (default: `true`).
 - `pylot.enableForLoopLiveUpdates`: Controls the timer-based `for` loop instrumentation used for live progress bars and in-loop variable updates. Disabling it keeps the normal post-execution inlay hints (default: `true`).
 - `pylot.maxInlayHintLength`: Maximum characters for an inlay hint before it is truncated (default: `50`).
-- `pylot.inlayHintColor`: Custom color for the variable overlay in hex format (default: `#ffdf0088`).
+- `pylot.inlayHintColor`: Custom color for the variable overlay in hex format.
 
 ## Requirements
 
