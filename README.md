@@ -1,5 +1,5 @@
 # Pylot – Python code runner
-This VS Code extension enables you to run Python code directly from the editor using smart selection and visual line markers. It turns your editor into an interactive Python environment, letting you to write, run and evaluate Python code simultaneously in one place. Use it as a lightweight and flexible alternative to data science notebooks to experiment with your data.
+Run Python code directly from the editor using smart selection and visual line markers. This extension transforms your VSCode editor into an interactive Python environment, enabling you to write, run and evaluate Python code simultaneously in one place. Use it as a lightweight and flexible alternative to data science notebooks for experimenting with your data and piloting your script.
 
 ## Features
 
