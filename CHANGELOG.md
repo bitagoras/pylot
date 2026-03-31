@@ -2,6 +2,15 @@
 
 All notable changes to the **Pylot** extension will be documented in this file.
 
+## [1.8.0] - 2026-03-31
+
+### New Features
+- **Implicit live watches**: Lines ending with `#?` now emit live inlay-hint updates while executing, including function-local scope.
+  - Assignment lines watch assigned names, including tuple/list unpacking names (for example: `a, (b, c) = ... #?`).
+  - Expression statement lines watch the expression value directly (for example: `len(buffer) #?`).
+  - Watch updates are throttled to a maximum rate of once every 0.5 seconds per line.
+- **`pylot.enableWatchComments`**: New boolean setting (default `true`) to globally enable/disable all `#?` watch processing.
+
 ## [1.7.0] - 2026-03-31
 
 ### New Features

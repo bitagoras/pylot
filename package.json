@@ -2,7 +2,7 @@
     "name": "pylot",
     "displayName": "Pylot - Python code runner",
     "description": "Executes lines of Python code with visualized smart selection.",
-    "version": "1.7.1",
+    "version": "1.8.0",
     "publisher": "bitagoras",
     "repository": "https://github.com/bitagoras/pylot",
     "engines": {
@@ -94,6 +94,11 @@
                     "type": "boolean",
                     "default": true,
                     "description": "Pylot: Enable timer-based live updates for for-loops. Disabling this stops the progress bar and in-loop variable updates, but keeps normal post-execution inlay hints."
+                },
+                "pylot.enableWatchComments": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Pylot: Enable implicit live watches for lines ending with #?. Disabling this ignores #? markers entirely."
                 },
                 "pylot.maxInlayHintLength": {
                     "type": "integer",

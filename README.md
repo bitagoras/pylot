@@ -1,10 +1,10 @@
 # Pylot – Python code runner
-Run Python code directly from the editor using smart selection and visual line markers. This extension turns your VSCode editor into an interactive Python environment, enabling you to write, run and evaluate Python code simultaneously in one place. Use it as a lightweight and flexible alternative to data science notebooks for experimenting with your data and piloting your script.
+Run Python code directly from the editor with smart selection and visual line markers. This turns the editor into an interactive Python session, where you can write, run and evaluate Python code simultaneously in one place. Use it as a lightweight, flexible alternative to data science notebooks for experimenting with your data and piloting your algorithm.
 
 ## Features
 
 - **Execute Python code** – Run selected code or the current line with `Shift+Enter` and advance the cursor.
-- **Smart selection** – Selection will be expanded to execute only full valid Python statements or blocks.
+- **Smart selection** – Selection will be expanded to execute only full valid Python statements.
 - **Visual line markers** – Line markers show the selection and execution state:
   - 🟧 Orange (animated): currently running
   - 🟩 Green: successfully executed
@@ -14,8 +14,9 @@ Run Python code directly from the editor using smart selection and visual line m
 - **Cell execution** – `Shift+Enter` at a cell comment, which starts with `#%`, executes the entire cell until the next cell comment or the end of the file.
 - **Variable inspection** – Hover over any variable to see its type and current value in a tooltip, even while the code is running. It also shows the length of sized objects and the shape of NumPy arrays.
 - **Expression evaluation** – Pressing `Ctrl+Shift+Space` evaluates any selected expression or variable at the cursor and shows the result in a tooltip.
-- **Live Variable Overlay** – See variable values and expression results by inlay hints directly in the editor, as ghost text right after the line.
+- **Variable Overlay** – See variable values and expression results by inlay hints directly in the editor, as ghost text right after the line.
 - **For-Loop Progress Bars** – Automatically shows progress bars for long-running `for` loops directly in the editor: `[■■■■■■■■‑‑‑‑‑‑‑‑‑‑‑‑‑] 32%, i=4`.
+- **Live Watches** – Add `#?` at the end of an assignment or expression line to show live inlay updates for that line while it executes.
 - **Execution interruption** – Easily interrupt long-running or stuck code using `Ctrl+Alt+C` without losing your Python state.
 - **Matplotlib support** – Keeps multiple Matplotlib plot windows open and interactive while you continue working.
 - **AI agent integration** – Expose the Python REPL to AI coding agents via a built-in MCP server.
@@ -42,6 +43,18 @@ Run Python code directly from the editor using smart selection and visual line m
 | Toggle Inlay Hints | Enable or disable live variable overlays | – |
 | Clear Inlay Hints | Remove all current variable hints from the editor | – |
 
+## When to use Pylot
+
+**Pylot** allowes a unified workflow when different other options feel restrictive:
+* **Use Jupyter?** → *It binds my code to a cell-based format.*
+* **Use a Python console?** → *I can't store my session as a script.*
+* **Write a complete script?** → *My decisions on the algorithm may depend on the processed data.*
+* **And then just run it?** → *I can't check the internal state*
+* **Use a debugger?** → *I can't improve my code during debugging.*
+
+**Use Pylot!** → Gives you full interactive control over your code in the global scope (i.e. outside functions).
+
+
 ## Configuration
 
 Pylot provides the following settings to customize its behavior:
@@ -55,6 +68,7 @@ Pylot provides the following settings to customize its behavior:
 - `pylot.mcpServer.port`: Port for the MCP server (default: `7822`).
 - `pylot.enableInlayHints`: Globally toggle the live variable inlay hints (default: `true`).
 - `pylot.enableForLoopLiveUpdates`: Controls the timer-based `for` loop instrumentation used for live progress bars and in-loop variable updates. Disabling it keeps the normal post-execution inlay hints (default: `true`).
+- `pylot.enableWatchComments`: Enables implicit live watches for lines ending with `#?`. Disabling this setting makes Pylot ignore all `#?` markers (default: `true`).
 - `pylot.maxInlayHintLength`: Maximum characters for an inlay hint before it is truncated (default: `50`).
 - `pylot.inlayHintColor`: Custom color for the variable overlay in hex format.
 - `pylot.showEditorTitleButtons`: Show or hide the ▶, ▶| and ▶▶ run buttons in the editor toolbar for Python files (default: `true`). Individual buttons can be hidden per VS Code's built-in right-click menu.
