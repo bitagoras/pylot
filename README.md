@@ -1,12 +1,5 @@
 # Pylot – Python code runner
-This VS Code extension enables you to run Python code directly from the editor using smart selection and visual line markers. It turns your editor into an interactive Python environment, letting you to write, run and evaluate Python code simultaneously in one place.
-
-### **Unified workflow**
-Use it as alternative to...
-- **Jupyter notebooks**: Run lines or blocks of code directly from Python scripts to experiment with your data and plot it interactively. This eliminates the need of cells, notebook formats and conversions.
-- **Interactive Python console**: Execute single Python commands directly in the editor and save your work afterwards.
-- **Either develop or run scripts**: Unifies the writing and execution of Python scripts; run the script step by step as you write.
-- **Debugging**: View the values of variables and expressions while executing code of the global scope (i.e. outside of functions).
+Run Python code directly from the editor using smart selection and visual line markers. This extension turns your VSCode editor into an interactive Python environment, enabling you to write, run and evaluate Python code simultaneously in one place. Use it as a lightweight and flexible alternative to data science notebooks for experimenting with your data and piloting your script.
 
 ## Features
 
@@ -64,7 +57,7 @@ Pylot provides the following settings to customize its behavior:
 - `pylot.enableForLoopLiveUpdates`: Controls the timer-based `for` loop instrumentation used for live progress bars and in-loop variable updates. Disabling it keeps the normal post-execution inlay hints (default: `true`).
 - `pylot.maxInlayHintLength`: Maximum characters for an inlay hint before it is truncated (default: `50`).
 - `pylot.inlayHintColor`: Custom color for the variable overlay in hex format.
-- `pylot.showEditorTitleButtons`: Show or hide the ▶ ▶| ▶▶ run buttons in the editor toolbar for Python files (default: `true`). Individual buttons can be hidden per VS Code's built-in right-click menu.
+- `pylot.showEditorTitleButtons`: Show or hide the ▶, ▶| and ▶▶ run buttons in the editor toolbar for Python files (default: `true`). Individual buttons can be hidden per VS Code's built-in right-click menu.
 
 ## Requirements
 
@@ -75,7 +68,7 @@ Pylot provides the following settings to customize its behavior:
 1. Open **Extensions** in VS Code (`Ctrl+Shift+X`).
 2. Search for **Pylot** and click **Install**.
 3. The required Python extension (`ms-python.python`) will be installed automatically.
-4. If other Python extensions have claimed `Shift+Enter`, `Ctrl+Shift+Enter` or `Shift+Ctrl+Alt+Enter` in precedence, Pylot tries to have priority in Python files. In case other Python REPLs are triggered, you need to remove those bindings:
+4. In case other Python extensions have claimed `Shift+Enter`, `Ctrl+Shift+Enter` or `Shift+Ctrl+Alt+Enter` in precedence, you need to remove those bindings:
    - Open the command palette (`Ctrl+Shift+P`) → **Preferences: Open Keyboard Shortcuts**.
    - Search for the conflicting shortcut and remove or reassign it.
 
