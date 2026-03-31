@@ -14,7 +14,7 @@ Run Python code directly from the editor using smart selection and visual line m
 - **Cell execution** – `Shift+Enter` at a cell comment, which starts with `#%`, executes the entire cell until the next cell comment or the end of the file.
 - **Variable inspection** – Hover over any variable to see its type and current value in a tooltip, even while the code is running. It also shows the length of sized objects and the shape of NumPy arrays.
 - **Expression evaluation** – Pressing `Ctrl+Shift+Space` evaluates any selected expression or variable at the cursor and shows the result in a tooltip.
-- **Live Variable Overlay** – See variable values and expression results as inlay hints directly in the editor, right after the line where they were modified.
+- **Live Variable Overlay** – See variable values and expression results by inlay hints directly in the editor, as ghost text right after the line.
 - **For-Loop Progress Bars** – Automatically shows progress bars for long-running `for` loops directly in the editor: `[■■■■■■■■‑‑‑‑‑‑‑‑‑‑‑‑‑] 32%, i=4`.
 - **Execution interruption** – Easily interrupt long-running or stuck code using `Ctrl+Alt+C` without losing your Python state.
 - **Matplotlib support** – Keeps multiple Matplotlib plot windows open and interactive while you continue working.
