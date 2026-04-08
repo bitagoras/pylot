@@ -14,6 +14,7 @@ Run Python code directly from the editor with smart selection and visual line ma
 - **Cell execution** – `Shift+Enter` at a cell comment, which starts with `#%`, executes the entire cell until the next cell comment or the end of the file.
 - **Variable inspection** – Hover over any variable to see its type and current value in a tooltip, even while the code is running. It also shows the length of sized objects and the shape of NumPy arrays.
 - **Expression evaluation** – Pressing `Ctrl+Shift+Space` evaluates any selected expression or variable at the cursor and shows the result in a tooltip.
+- **Array viewer** – Open arrays/matrices in a dedicated interactive grid with buffered scrolling, an expression field (supports slices and arbitrary expressions like `matrix.T`), inline value editing, and color mapping modes.
 - **Variable Overlay** – See variable values and expression results by inlay hints directly in the editor, as ghost text right after the line.
 - **For-Loop Progress Bars** – Automatically shows progress bars for long-running `for` loops directly in the editor: `[■■■■■■■■‑‑‑‑‑‑‑‑‑‑‑‑‑] 32%, i=4`.
 - **Live Watches** – Add `#?` at the end of an assignment or expression line to show live inlay updates for that line while it executes.
@@ -43,9 +44,20 @@ Run Python code directly from the editor with smart selection and visual line ma
 | Toggle Inlay Hints | Enable or disable live variable overlays | – |
 | Clear Inlay Hints | Remove all current variable hints from the editor | – |
 
+### Open the Array Viewer
+
+1. Hover a variable or expression to open the tooltip.
+2. Click the array-viewer link in the tooltip.
+3. In the viewer, use the expression field to enter any valid Python expression (for example, `matrix-10`, `matrix[:, ::-1]`, or `matrix.T`).
+
+<br>
+<div align="left">
+<img src="array_viewer.png" alt="Array viewer screen shot" width="450" />
+</div>
+
 ## When to use Pylot
 
-**Pylot** allowes a unified workflow when different other options feel restrictive:
+**Pylot** allows a unified workflow when different other options feel restrictive:
 * **Use Jupyter?** → *It binds my code to a cell-based format.*
 * **Use a Python console?** → *I can't store my session as a script.*
 * **Write a complete script?** → *My decisions on the algorithm may depend on the processed data.*

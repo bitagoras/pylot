@@ -57,7 +57,11 @@ let lastExpressionType: string = '';
 let lastExpressionShape: string = '';
 let lastExpressionLen: string = '';
 let currentPythonVersion: string = '';
-let asyncExpressionResultCallback: ((success: boolean, resultText: string, type: string, shape: string, len: string) => void) | null = null;
+type AsyncExprCallback = (success: boolean, resultText: string, type: string, shape: string, len: string) => void;
+let asyncExpressionResultCallback: AsyncExprCallback | null = null;
+const asyncExpressionCallbacks = new Map<string, AsyncExprCallback>();
+type SetItemCallback = (success: boolean, error?: string) => void;
+const setItemCallbacks = new Map<string, SetItemCallback>();
 let debugMode = false;
 let mcpDebugMode = false;
 let silentEvaluation = false;
@@ -765,8 +769,9 @@ export function activate(context: vscode.ExtensionContext) {
                                         }
                                         break;
 
-                                    case 'evaluate_async':
-                                        if (asyncExpressionResultCallback) {
+                                    case 'evaluate_async': {
+                                        const key = msg.requestId ?? 'hover';
+                                        if (key === 'hover' && asyncExpressionResultCallback) {
                                             asyncExpressionResultCallback(
                                                 msg.success,
                                                 msg.result || '',
@@ -775,8 +780,24 @@ export function activate(context: vscode.ExtensionContext) {
                                                 msg.len || ''
                                             );
                                             asyncExpressionResultCallback = null;
+                                        } else {
+                                            const cb = asyncExpressionCallbacks.get(key);
+                                            if (cb) {
+                                                asyncExpressionCallbacks.delete(key);
+                                                cb(msg.success, msg.result || '', msg.datatype || '', msg.shape || '', msg.len || '');
+                                            }
                                         }
                                         break;
+                                    }
+
+                                    case 'set_item_async': {
+                                        const cb = setItemCallbacks.get(msg.requestId ?? '');
+                                        if (cb) {
+                                            setItemCallbacks.delete(msg.requestId);
+                                            cb(msg.success, msg.error);
+                                        }
+                                        break;
+                                    }
 
                                     case 'execute':
                                         if (msg.success) {
@@ -1831,8 +1852,9 @@ export function activate(context: vscode.ExtensionContext) {
     let forceHoverResult: { expression: string, type: string, shape: string, len: string, result: string, range: vscode.Range } | null = null;
 
     /** Build a Markdown tooltip from evaluation results. */
-    function buildTooltipMarkdown(type: string, shape: string, len: string, result: string): vscode.MarkdownString {
+    function buildTooltipMarkdown(type: string, shape: string, len: string, result: string, expression?: string): vscode.MarkdownString {
         const markdown = new vscode.MarkdownString();
+        markdown.isTrusted = true;
         if (!type && !result) {
             markdown.appendMarkdown(`*Expression cannot be evaluated*`);
             return markdown;
@@ -1844,8 +1866,17 @@ export function activate(context: vscode.ExtensionContext) {
             }
             if (shape) {
                 // Format shape from "(10, 20)" to "10 x 20"
-                const formattedShape = shape.replace(/[()]/g, '').replace(/,\s*$/, '').replace(/,\s*/g, ' \u00d7 ').trim();
+                const formattedShape = shape === '()'
+                    ? 'scalar'
+                    : shape.replace(/[()]/g, '').replace(/,\s*$/, '').replace(/,\s*/g, ' \u00d7 ').trim();
                 typeLine += `, *\`shape\`*: ${formattedShape}`;
+            }
+            // Add "Open in Array Viewer" link for arrays/matrices with at least 1 dimension
+            // Exclude 0-d arrays (shape == "()") and plain scalars (no shape)
+            const shapeHasDims = shape && shape !== '()' && /\d/.test(shape);
+            if (shapeHasDims && expression) {
+                const args = encodeURIComponent(JSON.stringify({ expression, shape }));
+                typeLine += `\u00a0\u00a0[Open in Array Viewer](command:pylot.openArrayViewer?${args})`;
             }
             markdown.appendMarkdown(typeLine);
         }
@@ -1871,7 +1902,7 @@ export function activate(context: vscode.ExtensionContext) {
         async provideHover(document, position, token) {
             // ── Handle forced hover from "Evaluate Expression" command ──
             if (forceHoverResult) {
-                const markdown = buildTooltipMarkdown(forceHoverResult.type, forceHoverResult.shape, forceHoverResult.len, forceHoverResult.result);
+                const markdown = buildTooltipMarkdown(forceHoverResult.type, forceHoverResult.shape, forceHoverResult.len, forceHoverResult.result, forceHoverResult.expression);
 
                 // Consume the forced result so it doesn't persistently hijack normal hovers
                 forceHoverResult = null;
@@ -1970,7 +2001,7 @@ export function activate(context: vscode.ExtensionContext) {
             }
 
             if (lastExpressionResult !== '' || lastExpressionType !== '') {
-                return new vscode.Hover(buildTooltipMarkdown(lastExpressionType, lastExpressionShape, lastExpressionLen, lastExpressionResult));
+                return new vscode.Hover(buildTooltipMarkdown(lastExpressionType, lastExpressionShape, lastExpressionLen, lastExpressionResult, expressionToEvaluate));
             }
 
             return null;
@@ -2269,7 +2300,210 @@ export function activate(context: vscode.ExtensionContext) {
         return { success: true, output: 'Sent KeyboardInterrupt to REPL.' };
     });
 
+    // ── Array Viewer ──────────────────────────────────────────────────────────
+
+    /** The single shared array viewer panel (only one at a time). */
+    let arrayViewerPanel: vscode.WebviewPanel | undefined;
+
+    /** Generate a unique requestId for concurrent async eval calls. */
+    let arrayViewerReqCounter = 0;
+    function nextReqId(): string {
+        return `av_${++arrayViewerReqCounter}`;
+    }
+
+    /** Send evaluate_async to the Python REPL with a given requestId and return a Promise. */
+    function evalForViewer(code: string, reqId: string): Promise<string | null> {
+        return new Promise((resolve) => {
+            if (!pythonRepl || !replReady) { resolve(null); return; }
+            const cb: AsyncExprCallback = (success, resultText) => {
+                resolve(success ? resultText : null);
+            };
+            asyncExpressionCallbacks.set(reqId, cb);
+            const cmd = { action: 'evaluate_async', code: JSON.stringify(code), requestId: reqId };
+            pythonRepl.stdin?.write(JSON.stringify(cmd) + '\n');
+            setTimeout(() => {
+                if (asyncExpressionCallbacks.has(reqId)) {
+                    asyncExpressionCallbacks.delete(reqId);
+                    resolve(null);
+                }
+            }, 15000);
+        });
+    }
+
+    /** Sanitise raw Python repr so it can be JSON.parsed (nan/inf → quoted). */
+    function sanitiseForJson(s: string): string {
+        return s
+            .replace(/\bnan\b/gi, '"NaN"')
+            .replace(/\binfinity\b/gi, '"Infinity"')
+            .replace(/-"Infinity"/gi, '"-Infinity"')
+            .replace(/\binf\b/gi, '"Infinity"');
+    }
+
+    function createArrayViewerPanel(expression: string): void {
+        // If a panel already exists, send it the new expression and reveal it
+        if (arrayViewerPanel) {
+            arrayViewerPanel.reveal(vscode.ViewColumn.Beside);
+            arrayViewerPanel.webview.postMessage({ type: 'loadExpression', expression });
+            return;
+        }
+
+        const htmlPath = path.join(context.extensionPath, 'resources', 'array_viewer.html');
+        if (!fs.existsSync(htmlPath)) {
+            vscode.window.showErrorMessage('Pylot: array_viewer.html not found in resources/');
+            return;
+        }
+        const htmlContent = fs.readFileSync(htmlPath, 'utf8');
+
+        const panel = vscode.window.createWebviewPanel(
+            'pylotArrayViewer',
+            `Array Viewer`,
+            vscode.ViewColumn.Beside,
+            {
+                enableScripts: true,
+                retainContextWhenHidden: true,
+                localResourceRoots: [vscode.Uri.file(path.join(context.extensionPath, 'resources'))]
+            }
+        );
+
+        arrayViewerPanel = panel;
+        panel.onDidDispose(() => { arrayViewerPanel = undefined; });
+
+        panel.webview.html = htmlContent;
+
+        // Mutable expression — updated whenever the webview changes the active variable
+        let currentExpression = expression;
+
+        panel.webview.onDidReceiveMessage(async (msg: any) => {
+            // Any message that carries an expression field updates the active variable
+            if (typeof msg.expression === 'string' && msg.expression) {
+                currentExpression = msg.expression;
+                panel.title = `Array: ${currentExpression}`;
+            }
+
+            switch (msg.type) {
+                case 'ready': {
+                    panel.webview.postMessage({ type: 'loadExpression', expression: currentExpression });
+                    break;
+                }
+                case 'requestMeta': {
+                    const reqId = nextReqId();
+                    const code = `(lambda _x: __import__('json').dumps([list(_x.shape), str(_x.dtype), int(_x.ndim)]))((${currentExpression}))`;
+                    const raw = await evalForViewer(code, reqId);
+                    if (raw === null) {
+                        panel.webview.postMessage({ type: 'metaError', expression: currentExpression });
+                        return;
+                    }
+                    try {
+                        const [shape, dtype, ndim] = JSON.parse(raw);
+                        panel.webview.postMessage({ type: 'meta', expression: currentExpression, shape, dtype, ndim });
+                    } catch {
+                        panel.webview.postMessage({ type: 'metaError', expression: currentExpression });
+                    }
+                    break;
+                }
+
+                case 'requestChunk': {
+                    const { r0, r1, c0, c1, dimIndices, chunkId } = msg;
+                    const reqId = nextReqId();
+                    const extraDims = (dimIndices as number[]).map(i => String(i)).join(',');
+                    const sliceExpr = extraDims
+                        ? `(${currentExpression})[${extraDims},${r0}:${r1},${c0}:${c1}].tolist()`
+                        : `(${currentExpression})[${r0}:${r1},${c0}:${c1}].tolist()`;
+                    const raw = await evalForViewer(sliceExpr, reqId);
+                    if (raw === null) {
+                        panel.webview.postMessage({ type: 'chunkError', chunkId });
+                        return;
+                    }
+                    try {
+                        const data = JSON.parse(sanitiseForJson(raw));
+                        panel.webview.postMessage({ type: 'chunkData', chunkId, data, r0, c0 });
+                    } catch {
+                        panel.webview.postMessage({ type: 'chunkError', chunkId });
+                    }
+                    break;
+                }
+
+                case 'request1DChunk': {
+                    const { r0, r1, chunkId } = msg;
+                    const reqId = nextReqId();
+                    const sliceExpr = `(${currentExpression})[${r0}:${r1}].tolist()`;
+                    const raw = await evalForViewer(sliceExpr, reqId);
+                    if (raw === null) {
+                        panel.webview.postMessage({ type: 'chunkError', chunkId });
+                        return;
+                    }
+                    try {
+                        const data = JSON.parse(sanitiseForJson(raw));
+                        panel.webview.postMessage({ type: 'chunkData', chunkId, data, r0, c0: 0 });
+                    } catch {
+                        panel.webview.postMessage({ type: 'chunkError', chunkId });
+                    }
+                    break;
+                }
+
+                case 'requestColorRange': {
+                    const reqId = nextReqId();
+                    const { rowStride, colStride } = msg;
+                    const code = `(lambda _x: [float(_x[::${rowStride},::${colStride}].min()), float(_x[::${rowStride},::${colStride}].max())])((${currentExpression}))`;
+                    const raw = await evalForViewer(code, reqId);
+                    if (raw !== null) {
+                        try {
+                            const [minVal, maxVal] = JSON.parse(sanitiseForJson(raw));
+                            panel.webview.postMessage({ type: 'colorRange', minVal, maxVal });
+                        } catch { /* ignore */ }
+                    }
+                    break;
+                }
+
+                case 'requestColorRange1D': {
+                    const reqId = nextReqId();
+                    const { stride } = msg;
+                    const code = `(lambda _x: [float(_x[::${stride}].min()), float(_x[::${stride}].max())])((${currentExpression}))`;
+                    const raw = await evalForViewer(code, reqId);
+                    if (raw !== null) {
+                        try {
+                            const [minVal, maxVal] = JSON.parse(sanitiseForJson(raw));
+                            panel.webview.postMessage({ type: 'colorRange', minVal, maxVal });
+                        } catch { /* ignore */ }
+                    }
+                    break;
+                }
+
+                case 'setValue': {
+                    const reqId = nextReqId();
+                    const cb: SetItemCallback = (success, error) => {
+                        panel.webview.postMessage({ type: 'valueSet', success, error, msgReqId: msg.reqId });
+                    };
+                    setItemCallbacks.set(reqId, cb);
+                    const cmd = {
+                        action: 'set_item_async',
+                        expr: currentExpression,
+                        indices: msg.indices,
+                        value: msg.value,
+                        requestId: reqId
+                    };
+                    if (pythonRepl?.stdin) {
+                        pythonRepl.stdin.write(JSON.stringify(cmd) + '\n');
+                    }
+                    break;
+                }
+            }
+        });
+    }
+
+    const openArrayViewerCommand = vscode.commands.registerCommand('pylot.openArrayViewer', (args: any) => {
+        let expression: string | undefined;
+        if (typeof args === 'string') {
+            try { const parsed = JSON.parse(args); expression = parsed.expression; } catch { expression = args; }
+        } else if (args && typeof args === 'object') {
+            expression = args.expression;
+        }
+        if (!expression) { return; }
+        createArrayViewerPanel(expression);
+    });
+
     context.subscriptions.push(hoverProvider);
+    context.subscriptions.push(openArrayViewerCommand);
     context.subscriptions.push(executeCommand);
     context.subscriptions.push(executeNoMoveCommand);
     context.subscriptions.push(executeWholeCommand);

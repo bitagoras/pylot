@@ -2,7 +2,7 @@
     "name": "pylot",
     "displayName": "Pylot - Python code runner",
     "description": "Executes lines of Python code with visualized smart selection.",
-    "version": "1.8.0",
+    "version": "1.9.0",
     "publisher": "bitagoras",
     "repository": "https://github.com/bitagoras/pylot",
     "engines": {
@@ -171,6 +171,10 @@
             {
                 "command": "pylot.interruptExecution",
                 "title": "Pylot: Interrupt Execution"
+            },
+            {
+                "command": "pylot.openArrayViewer",
+                "title": "Pylot: Open Array Viewer"
             },
             {
                 "command": "pylot.agent.appendAndExecute",

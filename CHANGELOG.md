@@ -2,6 +2,14 @@
 
 All notable changes to the **Pylot** extension will be documented in this file.
 
+## [1.9.0] - 2026-04-08
+
+### New Features
+- **Array Viewer**: Added an interactive array viewer for matrix/array expressions with virtualized scrolling for large data.
+- **Expression field + history navigation**: The viewer supports expression/slice input (including arbitrary expressions) and arrow-key history navigation across viewed variables.
+- **Inline cell editing**: Numeric or text values can be edited directly in the viewer and written back to the underlying array.
+- **Color modes + default range coloring**: Added color mapping modes (`None`, `Sym`, `Range`) and set `Range` as the default.
+
 ## [1.8.0] - 2026-03-31
 
 ### New Features

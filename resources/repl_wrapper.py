@@ -481,6 +481,7 @@ def read_stdin():
                             send_msg('validate', valid=False)
                         continue
                     elif action == 'evaluate_async':
+                        req_id = command.get('requestId')
                         try:
                             adjusted_code = json.loads(command.get('code', '""'))
                             result = eval(adjusted_code, persistent_globals)
@@ -494,9 +495,38 @@ def read_stdin():
                                 except Exception:
                                     pass
 
-                            send_msg('evaluate_async', success=True, result=str(result), datatype=datatype, shape=shape, len=length)
+                            kwargs = dict(success=True, result=str(result), datatype=datatype, shape=shape, len=length)
+                            if req_id is not None:
+                                kwargs['requestId'] = req_id
+                            send_msg('evaluate_async', **kwargs)
                         except Exception:
-                            send_msg('evaluate_async', success=False)
+                            kwargs = dict(success=False)
+                            if req_id is not None:
+                                kwargs['requestId'] = req_id
+                            send_msg('evaluate_async', **kwargs)
+                        continue
+                    elif action == 'set_item_async':
+                        req_id = command.get('requestId')
+                        try:
+                            expr = command.get('expr', '')
+                            indices = command.get('indices', [])
+                            raw_value = command.get('value', 0)
+                            obj = eval(expr, persistent_globals)
+                            # Try to cast value to the array's dtype
+                            try:
+                                raw_value = type(obj.flat[0])(raw_value)
+                            except Exception:
+                                pass
+                            obj[tuple(int(i) for i in indices)] = raw_value
+                            kwargs = dict(success=True)
+                            if req_id is not None:
+                                kwargs['requestId'] = req_id
+                            send_msg('set_item_async', **kwargs)
+                        except Exception as e:
+                            kwargs = dict(success=False, error=str(e))
+                            if req_id is not None:
+                                kwargs['requestId'] = req_id
+                            send_msg('set_item_async', **kwargs)
                         continue
                     elif action == 'interrupt':
                         try:
