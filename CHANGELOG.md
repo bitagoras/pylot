@@ -2,6 +2,12 @@
 
 All notable changes to the **Pylot** extension will be documented in this file.
 
+## [1.9.2] - 2026-04-10
+
+### Improvements
+- **Array viewer multidimensional strategy**: For arrays with more than 2 dimensions, the viewer now uses expression-based slicing instead of a separate selector row. Expressions are auto-expanded to a suffix form like `A[(0),(0),:,:]` (and wrapped as `(expr)[...]` for non-identifier expressions).
+- **Inline extra-dimension controls**: Up/down controls for extra dimensions are now shown at the right side of the expression field and update the corresponding `(integer)` indices in the slice suffix.
+
 ## [1.9.1] - 2026-04-10
 
 ### Bug Fixes

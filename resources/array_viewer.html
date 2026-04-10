@@ -55,13 +55,16 @@
   #addr-input:focus { outline: 1px solid var(--btn-active-bg); }
   #range-info { font-size: 10px; color: var(--index-bg); white-space: nowrap; margin-left: 6px; }
 
-  /* ── Dim selectors (for ndim > 2) ── */
-  #dim-row { display: none; align-items: center; gap: 8px; padding: 3px 8px;
-             background: var(--header-bg); border-bottom: 1px solid var(--border);
-             height: 28px; flex-shrink: 0; }
-  #dim-row .dim-label { font-size: 11px; color: var(--index-bg); }
-  #dim-row input[type=number] { width: 60px; background: var(--input-bg); color: var(--input-fg);
-     border: 1px solid var(--border); padding: 1px 4px; font-size: 11px; }
+  /* ── Dim selectors (for ndim > 2) — hidden, replaced by slice suffix + buttons ── */
+  #dim-row { display: none !important; }
+
+  /* ── Slice index up/down buttons ── */
+  #slice-btns { display: flex; align-items: center; gap: 3px; flex-shrink: 0; }
+  .slice-btn-pair { display: flex; flex-direction: column; gap: 1px; }
+  .slice-btn { padding: 0 3px; border: 1px solid var(--border); border-radius: 2px; cursor: pointer;
+               background: var(--btn-bg); color: var(--btn-fg); font-size: 9px; line-height: 1;
+               height: 11px; min-width: 16px; display: flex; align-items: center; justify-content: center; }
+  .slice-btn:hover { filter: brightness(1.4); }
 
   /* ── Error state ── */
   #viewer-error {
@@ -133,6 +136,7 @@
 <div id="addr-row">
   <button id="btn-reload" title="Reload / update array data">↺</button>
   <input id="addr-input" type="text" spellcheck="false" placeholder="varname[row0:row1, col0:col1]">
+  <div id="slice-btns"></div>
   <span id="range-info">visible min: -   max: -</span>
 </div>
 
@@ -174,7 +178,8 @@
   let colorMode = 'range';
   let colorMin = null;
   let colorMax = null;
-  let dimIndices = [];
+  let dimIndices = [];       // always [] now; slice indices live in the expression itself
+  let baseShape = null;      // shape of the base expression when ndim>2 auto-conversion happened
   let viewR0 = 0;
   let viewC0 = 0;
   let visRows = 1;
@@ -200,10 +205,8 @@
 
   function rememberView(expression, r0, c0) {
     if (navigatingHistory || !expression) return;
-    const existingIdx = history.findIndex(h => h.expression === expression);
-    if (existingIdx >= 0) {
-      history.splice(existingIdx, 1);
-    }
+    const latest = history.length ? history[history.length - 1] : null;
+    if (latest && latest.expression === expression && latest.r0 === r0 && latest.c0 === c0) return;
     history.push({ expression, r0, c0 });
     historyIdx = -1;
   }
@@ -296,7 +299,62 @@
     if (Number.isInteger(v)) return String(v);
     return v.toFixed(DISPLAY_DECIMALS);
   }
+  // ── Slice-suffix helpers ───────────────────────────────────────────────
+  function isSimpleIdentifier(s) {
+    return /^[A-Za-z_][A-Za-z0-9_]*$/.test(s.trim());
+  }
 
+  // Returns the index of the '[' that opens the last [...] at the end of expr, or -1.
+  function findSliceSuffixStart(expr) {
+    if (!expr.endsWith(']')) return -1;
+    let depth = 0;
+    for (let i = expr.length - 1; i >= 0; i--) {
+      if (expr[i] === ']') depth++;
+      else if (expr[i] === '[') { depth--; if (depth === 0) return i; }
+    }
+    return -1;
+  }
+
+  // Builds e.g. A[(0),(1),:,:]  or  (complex)[(0),(1),:,:]
+  function buildSlicedExpression(base, indices) {
+    const b = base.trim();
+    let wrapped;
+    if (isSimpleIdentifier(b) || (b.startsWith('(') && b.endsWith(')'))) {
+      wrapped = b;
+    } else {
+      wrapped = `(${b})`;
+    }
+    const parts = [...indices.map(i => `(${i})`), ':', ':'];
+    return `${wrapped}[${parts.join(',')}]`;
+  }
+
+  // Rebuilds the slice-index up/down buttons based on the number of (integer) patterns
+  // found inside the [...] suffix of the current addr-input value.
+  function updateSliceButtons() {
+    const expr = addrInput.value;
+    const suffixStart = findSliceSuffixStart(expr);
+    let numDims = 0;
+    if (suffixStart >= 0) {
+      const sliceContent = expr.slice(suffixStart + 1, -1);
+      const matches = sliceContent.match(/\(\d+\)/g);
+      numDims = matches ? matches.length : 0;
+    }
+    const container = document.getElementById('slice-btns');
+    if (container.children.length === numDims) return; // nothing changed
+    container.innerHTML = '';
+    for (let d = 0; d < numDims; d++) {
+      const pair = document.createElement('div');
+      pair.className = 'slice-btn-pair';
+      const up = document.createElement('button');
+      up.className = 'slice-btn'; up.dataset.dim = d; up.dataset.dir = '1';
+      up.textContent = '\u25b2'; up.title = `Increment index of extra dim ${d}`;
+      const dn = document.createElement('button');
+      dn.className = 'slice-btn'; dn.dataset.dim = d; dn.dataset.dir = '-1';
+      dn.textContent = '\u25bc'; dn.title = `Decrement index of extra dim ${d}`;
+      pair.appendChild(up); pair.appendChild(dn);
+      container.appendChild(pair);
+    }
+  }
   // ── Load expression ──────────────────────────────────────────────────────
   function loadExpression(expr, initialR0, initialC0) {
     if (!navigatingHistory) {
@@ -382,52 +440,33 @@
       meta = null;
       is1D = false;
       document.getElementById('info-label').textContent = `scalar  ${msg.dtype}`;
-      document.getElementById('dim-row').style.display = 'none';
+      document.getElementById('slice-btns').innerHTML = '';
       setRangeInfo(null, null);
       setViewerError('Array Viewer does not support NumPy scalars (0-D). Please select an array with at least one dimension.');
       setStatus('Unsupported: NumPy scalar (0-D).');
       return;
     }
 
-    meta = { shape: msg.shape, dtype: msg.dtype, ndim: msg.ndim };
-    is1D = msg.ndim === 1;
-    document.getElementById('info-label').textContent = `${msg.shape.join(' × ')}  ${msg.dtype}`;
+    dimIndices = []; // always empty; slice indices live in the expression itself
 
-    const dimRow = document.getElementById('dim-row');
-    dimRow.innerHTML = '';
-    dimIndices = [];
     if (msg.ndim > 2) {
-      dimRow.style.display = 'flex';
-      const lbl = document.createElement('span');
-      lbl.className = 'dim-label'; lbl.textContent = 'Dims:';
-      dimRow.appendChild(lbl);
-      for (let d = 0; d < msg.ndim - 2; d++) {
-        dimIndices.push(0);
-        const wrap = document.createElement('span');
-        wrap.style.cssText = 'display:flex;align-items:center;gap:3px';
-        const l = document.createElement('span');
-        l.className = 'dim-label'; l.textContent = `axis ${d}:`;
-        const inp = document.createElement('input');
-        inp.type = 'number'; inp.min = 0; inp.max = msg.shape[d] - 1; inp.value = 0;
-        inp.dataset.dim = d;
-        inp.addEventListener('change', () => {
-          dimIndices[+inp.dataset.dim] = Math.max(0, Math.min(msg.shape[+inp.dataset.dim]-1, +inp.value));
-          inp.value = dimIndices[+inp.dataset.dim];
-          scrollingActive = false;
-          clearVisibleRangeTimer();
-          chunkCache.clear(); pendingChunks.clear();
-          currentBufferKeys = new Set();
-          bufferTileR0 = 0; bufferTileC0 = 0;
-          setRangeInfo(null, null);
-          render();
-        });
-        wrap.appendChild(l); wrap.appendChild(inp);
-        dimRow.appendChild(wrap);
-      }
-    } else {
-      dimRow.style.display = 'none';
+      // Auto-convert base expression to sliced form: e.g. A  ->  A[(0),(0),:,:]
+      // Save the full shape so we can clamp the up/down buttons later.
+      baseShape = msg.shape;
+      const indices = new Array(msg.ndim - 2).fill(0);
+      const slicedExpr = buildSlicedExpression(currentExpression, indices);
+      // Load the sliced expression without adding to history.
+      navigatingHistory = true;
+      loadExpression(slicedExpr, 0, 0);
+      navigatingHistory = false;
+      return;
     }
 
+    meta = { shape: msg.shape, dtype: msg.dtype, ndim: msg.ndim };
+    is1D = msg.ndim === 1;
+    document.getElementById('info-label').textContent = `${msg.shape.join(' \u00d7 ')}  ${msg.dtype}`;
+
+    updateSliceButtons();
     buildGrid();
   }
 
@@ -557,7 +596,39 @@
 
   document.getElementById('btn-reload').addEventListener('click', () => { commitAddr(true); });
 
+  // ── Slice up/down buttons ────────────────────────────────────────────────
+  document.getElementById('slice-btns').addEventListener('click', (e) => {
+    const btn = e.target.closest('.slice-btn');
+    if (!btn || !meta) return;
+    const dimI = parseInt(btn.dataset.dim);
+    const delta = parseInt(btn.dataset.dir);
+    const expr = addrInput.value.trim();
+    const suffixStart = findSliceSuffixStart(expr);
+    if (suffixStart < 0) return;
+    const base = expr.slice(0, suffixStart);
+    const sliceContent = expr.slice(suffixStart + 1, -1);
+    let count = 0;
+    const newSliceContent = sliceContent.replace(/\((\d+)\)/g, (match, numStr) => {
+      if (count === dimI) {
+        count++;
+        let newVal = Math.max(0, parseInt(numStr) + delta);
+        if (baseShape && dimI < baseShape.length) newVal = Math.min(baseShape[dimI] - 1, newVal);
+        return `(${newVal})`;
+      }
+      count++;
+      return match;
+    });
+    const newExpr = `${base}[${newSliceContent}]`;
+    if (newExpr === currentExpression) return;
+    addrInput.value = newExpr;
+    // Reload without adding the current expression to history
+    navigatingHistory = true;
+    loadExpression(newExpr, viewR0, viewC0);
+    navigatingHistory = false;
+  });
+
   function commitAddr(forceReload) {
+    baseShape = null; // clear stale shape on any user-initiated load
     const txt = addrInput.value.trim();
     if (!txt) return;
 
@@ -579,6 +650,12 @@
     } else {
       scrollTo(r0, c0);
     }
+
+    // Confirmed user action: create history entry unless it's already the latest one.
+    rememberView(newExpr, r0, c0);
+
+    // Button count changes are only applied on confirmed commits (Enter / reload).
+    updateSliceButtons();
   }
 
   // ── Color buttons ────────────────────────────────────────────────────────
