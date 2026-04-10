@@ -76,7 +76,7 @@
   }
 
   /* ── Main scroll container ── */
-  #scroll-host { flex: 1; overflow: auto; position: relative; }
+  #scroll-host { flex: 1; overflow: auto; position: relative; outline: none; }
   #phantom { position: absolute; top: 0; left: 0; pointer-events: none; }
 
   /* ── Sticky rendering layer ── */
@@ -133,7 +133,7 @@
 <div id="addr-row">
   <button id="btn-reload" title="Reload / update array data">↺</button>
   <input id="addr-input" type="text" spellcheck="false" placeholder="varname[row0:row1, col0:col1]">
-  <span id="range-info">min: -   max: -</span>
+  <span id="range-info">visible min: -   max: -</span>
 </div>
 
 <!-- Dimension selectors (hidden for 1D/2D) -->
@@ -143,7 +143,7 @@
 <div id="viewer-error"></div>
 
 <!-- Scroll host -->
-<div id="scroll-host">
+<div id="scroll-host" tabindex="0">
   <div id="phantom"></div>
   <div id="grid-wrap">
     <div id="col-idx-row"></div>
@@ -165,6 +165,8 @@
   const IDX_COL_W = 56;
   const IDX_ROW_H = 22;
   const DISPLAY_DECIMALS = 5;
+  const SCROLL_SETTLE_MS = 160;
+  const CHUNK_RANGE_UPDATE_MS = 60;
 
   // ── State ────────────────────────────────────────────────────────────────
   let currentExpression = '';
@@ -187,6 +189,8 @@
   let bufferTileC0 = 0;
   let scrollRafPending = false;
   let syncingScroll = false;
+  let visibleRangeTimer = null;
+  let scrollingActive = false;
 
   // ── History ──────────────────────────────────────────────────────────────
   // Each entry: { expression, r0, c0 }
@@ -305,6 +309,8 @@
     currentExpression = expr;
     meta = null;
     is1D = false;
+    scrollingActive = false;
+    clearVisibleRangeTimer();
     colorMin = null; colorMax = null;
     chunkCache.clear(); pendingChunks.clear();
     currentBufferKeys = new Set();
@@ -362,7 +368,7 @@
       case 'chunkError':
         pendingChunks.delete(msg.chunkId);
         chunkCache.set(msg.chunkId, null);
-        maybeFinalizeBufferColorRange();
+        queueVisibleColorRangeFromData();
         setStatus('Chunk load error');
         break;
       case 'valueSet':   onValueSet(msg); break;
@@ -407,6 +413,8 @@
         inp.addEventListener('change', () => {
           dimIndices[+inp.dataset.dim] = Math.max(0, Math.min(msg.shape[+inp.dataset.dim]-1, +inp.value));
           inp.value = dimIndices[+inp.dataset.dim];
+          scrollingActive = false;
+          clearVisibleRangeTimer();
           chunkCache.clear(); pendingChunks.clear();
           currentBufferKeys = new Set();
           bufferTileR0 = 0; bufferTileC0 = 0;
@@ -444,6 +452,26 @@
   }
 
   // ── Scroll ───────────────────────────────────────────────────────────────
+  document.getElementById('scroll-host').addEventListener('keydown', (e) => {
+    if (!meta) return;
+    const maxRow = Math.max(0, nRows() - 1);
+    const maxCol = Math.max(0, nCols() - 1);
+    const pageRows = Math.max(1, visRows - 1);
+    const pageCols = Math.max(1, visCols - 1);
+    let dr = 0, dc = 0;
+    if      (e.key === 'ArrowDown')  dr = 1;
+    else if (e.key === 'ArrowUp')    dr = -1;
+    else if (e.key === 'ArrowRight') dc = 1;
+    else if (e.key === 'ArrowLeft')  dc = -1;
+    else if (e.key === 'PageDown')   dr = pageRows;
+    else if (e.key === 'PageUp')     dr = -pageRows;
+    else return;
+    e.preventDefault();
+    const newR = Math.max(0, Math.min(maxRow, viewR0 + dr));
+    const newC = Math.max(0, Math.min(maxCol, viewC0 + dc));
+    if (newR !== viewR0 || newC !== viewC0) scrollTo(newR, newC);
+  });
+
   document.getElementById('scroll-host').addEventListener('scroll', () => {
     if (syncingScroll || scrollRafPending) return;
     scrollRafPending = true;
@@ -458,9 +486,21 @@
     if (!meta) return;
     const maxRow = Math.max(0, nRows() - 1);
     const maxCol = Math.max(0, nCols() - 1);
-    const newR0 = Math.max(0, Math.min(maxRow, Math.round(host.scrollTop / ROW_H)));
+    let newR0 = Math.max(0, Math.min(maxRow, Math.round(host.scrollTop / ROW_H)));
+    // If scroll moved but rounding landed on the same row, move one row in scroll direction
+    if (newR0 === viewR0 && host.scrollTop !== viewR0 * ROW_H) {
+      newR0 = host.scrollTop > viewR0 * ROW_H
+        ? Math.min(maxRow, viewR0 + 1)
+        : Math.max(0, viewR0 - 1);
+    }
     const rawC = is1D ? 0 : (host.scrollLeft - IDX_COL_W) / COL_W;
-    const newC0 = is1D ? 0 : Math.max(0, Math.min(maxCol, Math.round(rawC)));
+    let newC0 = is1D ? 0 : Math.max(0, Math.min(maxCol, Math.round(rawC)));
+    // If scroll moved but rounding landed on the same column, move one column in scroll direction
+    if (!is1D && newC0 === viewC0 && host.scrollLeft !== IDX_COL_W + viewC0 * COL_W) {
+      newC0 = host.scrollLeft > IDX_COL_W + viewC0 * COL_W
+        ? Math.min(maxCol, viewC0 + 1)
+        : Math.max(0, viewC0 - 1);
+    }
 
     const snappedTop = newR0 * ROW_H;
     const snappedLeft = is1D ? 0 : IDX_COL_W + newC0 * COL_W;
@@ -474,6 +514,7 @@
     if (newR0 !== viewR0 || newC0 !== viewC0) {
       viewR0 = newR0; viewC0 = Math.max(0, newC0);
       computeVisible(); render();
+      queueVisibleColorRangeFromScroll();
     }
     if (document.activeElement !== document.getElementById('addr-input')) {
       updateAddrBar();
@@ -482,14 +523,7 @@
 
   function updateAddrBar() {
     if (!meta) { document.getElementById('addr-input').value = currentExpression || ''; return; }
-    const r0 = bufferTileR0 * TILE_ROWS;
-    const c0 = is1D ? 0 : bufferTileC0 * TILE_COLS;
-    const r1 = Math.min(nRows(), r0 + BUFFER_TILE_SPAN * TILE_ROWS);
-    const c1 = is1D ? 1 : Math.min(nCols(), c0 + BUFFER_TILE_SPAN * TILE_COLS);
-    const expr = currentExpression || '';
-    document.getElementById('addr-input').value = is1D
-      ? `${expr}[${r0}:${r1}]`
-      : `${expr}[${r0}:${r1}, ${c0}:${c1}]`;
+    document.getElementById('addr-input').value = currentExpression || '';
   }
 
   // ── Address bar ──────────────────────────────────────────────────────────
@@ -565,34 +599,39 @@
     });
   }
 
-  // ── Color range (current buffer only) ───────────────────────────────────
+  // ── Color range (visible viewport) ──────────────────────────────────────
   function setRangeInfo(minVal, maxVal) {
     const el = document.getElementById('range-info');
     if (minVal === null || maxVal === null) {
-      el.textContent = 'min: -   max: -';
+      el.textContent = 'visible min: -   max: -';
       return;
     }
     const fmt = (v) => formatNumber(Number(v));
-    el.textContent = `min: ${fmt(minVal)}   max: ${fmt(maxVal)}`;
+    el.textContent = `visible min: ${fmt(minVal)}   max: ${fmt(maxVal)}`;
   }
 
-  function computeBufferColorRange() {
-    if (!meta || currentBufferKeys.size === 0) return { min: null, max: null };
+  function clearVisibleRangeTimer() {
+    if (visibleRangeTimer !== null) {
+      clearTimeout(visibleRangeTimer);
+      visibleRangeTimer = null;
+    }
+  }
+
+  function computeVisibleColorRange() {
+    if (!meta) return { min: null, max: null };
+    const r0 = Math.max(0, viewR0);
+    const c0 = is1D ? 0 : Math.max(0, viewC0);
+    const r1 = Math.min(nRows(), r0 + visRows);
+    const c1 = is1D ? 1 : Math.min(nCols(), c0 + visCols);
     let min = Infinity;
     let max = -Infinity;
 
-    for (const key of currentBufferKeys) {
-      const chunk = chunkCache.get(key);
-      if (!chunk || !Array.isArray(chunk)) continue;
-      for (let r = 0; r < chunk.length; r++) {
-        const row = chunk[r];
-        if (!Array.isArray(row)) continue;
-        for (let c = 0; c < row.length; c++) {
-          const v = row[c];
-          if (typeof v !== 'number' || !isFinite(v)) continue;
-          if (v < min) min = v;
-          if (v > max) max = v;
-        }
+    for (let r = r0; r < r1; r++) {
+      for (let c = c0; c < c1; c++) {
+        const v = getCachedValue(r, c);
+        if (typeof v !== 'number' || !isFinite(v)) continue;
+        if (v < min) min = v;
+        if (v > max) max = v;
       }
     }
 
@@ -600,17 +639,35 @@
     return { min, max };
   }
 
-  function maybeFinalizeBufferColorRange() {
-    if (!meta || currentBufferKeys.size === 0) return;
-    for (const key of currentBufferKeys) {
-      if (pendingChunks.has(key)) return;
-      if (!chunkCache.has(key)) return;
-    }
-    const range = computeBufferColorRange();
+  function applyVisibleColorRange() {
+    const range = computeVisibleColorRange();
+    if (range.min === colorMin && range.max === colorMax) return;
     colorMin = range.min;
     colorMax = range.max;
     setRangeInfo(colorMin, colorMax);
     recolorAll();
+  }
+
+  function scheduleVisibleColorRangeUpdate(delayMs, markScrollSettled) {
+    clearVisibleRangeTimer();
+    visibleRangeTimer = setTimeout(() => {
+      visibleRangeTimer = null;
+      if (markScrollSettled) scrollingActive = false;
+      applyVisibleColorRange();
+    }, delayMs);
+  }
+
+  function queueVisibleColorRangeFromScroll() {
+    scrollingActive = true;
+    scheduleVisibleColorRangeUpdate(SCROLL_SETTLE_MS, true);
+  }
+
+  function queueVisibleColorRangeFromData() {
+    if (scrollingActive) {
+      scheduleVisibleColorRangeUpdate(SCROLL_SETTLE_MS, true);
+      return;
+    }
+    scheduleVisibleColorRangeUpdate(CHUNK_RANGE_UPDATE_MS, false);
   }
 
   // ── Rendering ────────────────────────────────────────────────────────────
@@ -668,6 +725,9 @@
       dataRows.appendChild(row);
     }
     updateAddrBar();
+    if (!scrollingActive) {
+      scheduleVisibleColorRangeUpdate(0, false);
+    }
   }
 
   function setCellValue(cell, val) {
@@ -702,9 +762,6 @@
     }
     bufferTileR0 = nextR0;
     bufferTileC0 = nextC0;
-    colorMin = null;
-    colorMax = null;
-    setRangeInfo(null, null);
     ensureBufferTiles();
   }
 
@@ -738,7 +795,7 @@
       if (!keep.has(key)) pendingChunks.delete(key);
     });
 
-    maybeFinalizeBufferColorRange();
+    queueVisibleColorRangeFromData();
   }
 
   function isKeyInCurrentBuffer(key) {
@@ -787,7 +844,7 @@
       const val = getCachedValue(+cell.dataset.r, +cell.dataset.c);
       if (val !== undefined) setCellValue(cell, val);
     });
-    maybeFinalizeBufferColorRange();
+    queueVisibleColorRangeFromData();
   }
 
   // ── Inline editing ───────────────────────────────────────────────────────
@@ -843,7 +900,7 @@
         const nv = parseFloat(cell.dataset.v);
         if (!isNaN(nv)) { if (is1D) chunk[lr] = [nv]; else chunk[lr][lc] = nv; }
       }
-      maybeFinalizeBufferColorRange();
+      queueVisibleColorRangeFromData();
     }
   }
 

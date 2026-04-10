@@ -2,6 +2,16 @@
 
 All notable changes to the **Pylot** extension will be documented in this file.
 
+## [1.9.1] - 2026-04-10
+
+### Bug Fixes
+- **Array viewer scroll stepping**: Fixed cases where small scroll movements could stay stuck on the current row or column because viewport snapping rounded back to the previous cell.
+- **Stable array viewer labeling**: The viewer now keeps the entered expression in the address field and no longer renames the panel title while array updates arrive.
+
+### Improvements
+- **Array viewer keyboard navigation**: The scroll viewport can now receive focus and supports `Arrow` keys plus `Page Up` and `Page Down` for navigation.
+- **Visible range statistics**: The min/max readout now reflects the currently visible viewport instead of the larger buffered area, with smoother updates during scrolling, chunk loading, and inline edits.
+
 ## [1.9.0] - 2026-04-08
 
 ### New Features

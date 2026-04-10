@@ -2377,7 +2377,6 @@ export function activate(context: vscode.ExtensionContext) {
             // Any message that carries an expression field updates the active variable
             if (typeof msg.expression === 'string' && msg.expression) {
                 currentExpression = msg.expression;
-                panel.title = `Array: ${currentExpression}`;
             }
 
             switch (msg.type) {
