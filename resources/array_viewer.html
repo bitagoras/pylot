@@ -596,6 +596,7 @@
       const bg = valueToColor(v);
       cell.style.background = bg || '';
       cell.style.color = bg && needsDarkText(bg) ? '#111' : '';
+      cell.style.fontWeight = isVisibleExtremeValue(v) ? '700' : '';
     });
   }
 
@@ -617,12 +618,30 @@
     }
   }
 
-  function computeVisibleColorRange() {
-    if (!meta) return { min: null, max: null };
+  function getStrictViewportBounds() {
+    const host = document.getElementById('scroll-host');
     const r0 = Math.max(0, viewR0);
     const c0 = is1D ? 0 : Math.max(0, viewC0);
-    const r1 = Math.min(nRows(), r0 + visRows);
-    const c1 = is1D ? 1 : Math.min(nCols(), c0 + visCols);
+    const visibleRows = Math.max(1, Math.ceil(host.clientHeight / ROW_H));
+    const visibleCols = is1D
+      ? 1
+      : Math.max(1, Math.ceil(Math.max(1, host.clientWidth - IDX_COL_W) / COL_W));
+    const r1 = Math.min(nRows(), r0 + visibleRows);
+    const c1 = is1D ? 1 : Math.min(nCols(), c0 + visibleCols);
+    return { r0, r1, c0, c1 };
+  }
+
+  function isVisibleExtremeValue(v) {
+    return typeof v === 'number'
+      && isFinite(v)
+      && colorMin !== null
+      && colorMax !== null
+      && (v === colorMin || v === colorMax);
+  }
+
+  function computeVisibleColorRange() {
+    if (!meta) return { min: null, max: null };
+    const { r0, r1, c0, c1 } = getStrictViewportBounds();
     let min = Infinity;
     let max = -Infinity;
 
@@ -734,12 +753,16 @@
     cell.classList.remove('loading');
     if (typeof val === 'string') {
       cell.textContent = val; cell.dataset.v = '';
+      cell.style.background = '';
+      cell.style.color = '';
+      cell.style.fontWeight = '';
     } else {
       const s = formatNumber(val);
       cell.textContent = s; cell.dataset.v = val;
       const bg = valueToColor(val);
       cell.style.background = bg || '';
       cell.style.color = bg && needsDarkText(bg) ? '#111' : '';
+      cell.style.fontWeight = isVisibleExtremeValue(val) ? '700' : '';
     }
   }
 

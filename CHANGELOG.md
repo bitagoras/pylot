@@ -11,6 +11,7 @@ All notable changes to the **Pylot** extension will be documented in this file.
 ### Improvements
 - **Array viewer keyboard navigation**: The scroll viewport can now receive focus and supports `Arrow` keys plus `Page Up` and `Page Down` for navigation.
 - **Visible range statistics**: The min/max readout now reflects the currently visible viewport instead of the larger buffered area, with smoother updates during scrolling, chunk loading, and inline edits.
+- **Visible extrema emphasis**: All cells whose value equals the current visible minimum or maximum are now displayed in bold.
 
 ## [1.9.0] - 2026-04-08
 
