@@ -2,6 +2,13 @@
 
 All notable changes to the **Pylot** extension will be documented in this file.
 
+## [1.10.0] - 2026-04-12
+
+### Improvements
+- **Array viewer history dropdown**: Added recent-expression history dropdown
+- **Array viewer header layout refresh**: Reorganized the top UI into two lines. The first line is now dedicated to expression editing (with reload, history dropdown, and inline extra-dimension slice controls kept around the expression field).
+- **Icon-only color mode buttons**: Color mode controls now show symbols only (`◯`, `⦶`, `⊘`) while preserving tooltips for discoverability.
+
 ## [1.9.2] - 2026-04-10
 
 ### Improvements

@@ -28,22 +28,38 @@
          background: var(--vscode-editor-background, #1e1e1e);
          color: var(--cell-fg); overflow: hidden; height: 100vh; display: flex; flex-direction: column; }
 
-  /* ── Toolbar ── */
-  #toolbar { display: flex; align-items: center; gap: 6px; padding: 3px 8px;
+  /* ── Toolbar (row 2: info/range/colors) ── */
+  #toolbar { display: flex; align-items: center; gap: 8px; padding: 2px 8px;
              background: var(--header-bg); border-bottom: 1px solid var(--border);
-             height: 30px; flex-shrink: 0; }
-  #info-label { font-size: 11px; color: var(--index-bg); white-space: nowrap; }
-  .spacer { flex: 1; }
-  #status { font-size: 10px; color: var(--index-bg); white-space: nowrap; }
-  .btn-group { display: flex; border: 1px solid var(--border); border-radius: 3px; overflow: hidden; }
-  .btn-group button { padding: 1px 8px; border: none; cursor: pointer;
-                      background: var(--btn-bg); color: var(--btn-fg); font-size: 11px; line-height: 1.4; }
+             min-height: 26px; flex-shrink: 0; }
+  #info-label {
+    font-size: 11px;
+    color: var(--index-bg);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+  #status { display: none; }
+  .btn-group { display: inline-flex; border: 1px solid var(--border); border-radius: 3px; overflow: hidden; }
+  .btn-group button {
+    width: 24px;
+    min-width: 24px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    cursor: pointer;
+    background: var(--btn-bg);
+    color: var(--btn-fg);
+    font-size: 12px;
+    line-height: 1;
+  }
   .btn-group button.active { background: var(--btn-active-bg); color: var(--btn-active-fg); }
   .btn-group button:hover:not(.active) { filter: brightness(1.3); }
 
-  /* ── Address / slice bar ── */
+  /* ── Address / slice bar (row 1: expression) ── */
   #addr-row { display: flex; align-items: center; gap: 4px; padding: 2px 8px;
-              border-bottom: 1px solid var(--border); height: 28px; flex-shrink: 0;
+              border-bottom: 1px solid var(--border); min-height: 30px; flex-shrink: 0;
               background: var(--header-bg); }
   #btn-reload { padding: 1px 7px; border: 1px solid var(--border); border-radius: 3px; cursor: pointer;
                 background: var(--btn-bg); color: var(--btn-fg); font-size: 13px; line-height: 1.3;
@@ -104,7 +120,7 @@
   }
   .expr-history-item:last-child { border-bottom: none; }
   .expr-history-item:hover { background: var(--btn-active-bg); color: var(--btn-active-fg); }
-  #range-info { font-size: 10px; color: var(--index-bg); white-space: nowrap; margin-left: 6px; }
+  #range-info { font-size: 10px; color: var(--index-bg); white-space: nowrap; margin-left: auto; }
 
   /* ── Dim selectors (for ndim > 2) — hidden, replaced by slice suffix + buttons ── */
   #dim-row { display: none !important; }
@@ -171,19 +187,7 @@
 </head>
 <body>
 
-<!-- Toolbar -->
-<div id="toolbar">
-  <span id="info-label">—</span>
-  <span class="spacer"></span>
-  <span id="status"></span>
-  <div class="btn-group" id="color-btns">
-    <button data-mode="none" title="No color">◯ None</button>
-    <button data-mode="sym" title="Symmetric diverging (blue↔white↔red, white=0)"> ⦶ Sym</button>
-    <button data-mode="range" title="Range (yellow→green→blue)" class="active">⊘ Range</button>
-  </div>
-</div>
-
-<!-- Address / slice bar -->
+<!-- Address / slice bar (row 1) -->
 <div id="addr-row">
   <button id="btn-reload" title="Reload / update array data">↺</button>
   <div id="expr-input-wrap">
@@ -192,7 +196,18 @@
     <div id="expr-history-menu"></div>
   </div>
   <div id="slice-btns"></div>
-  <span id="range-info">visible min: -   max: -</span>
+</div>
+
+<!-- Toolbar (row 2) -->
+<div id="toolbar">
+  <span id="info-label">—</span>
+  <span id="range-info">Visible min: - max: -</span>
+  <div class="btn-group" id="color-btns">
+    <button data-mode="none" title="No color" aria-label="No color">◯</button>
+    <button data-mode="sym" title="Symmetric diverging (blue↔white↔red, white=0)" aria-label="Symmetric diverging">⦶</button>
+    <button data-mode="range" title="Range (yellow→green→blue)" aria-label="Range" class="active">⊘</button>
+  </div>
+  <span id="status" aria-hidden="true"></span>
 </div>
 
 <!-- Dimension selectors (hidden for 1D/2D) -->
@@ -805,11 +820,11 @@
   function setRangeInfo(minVal, maxVal) {
     const el = document.getElementById('range-info');
     if (minVal === null || maxVal === null) {
-      el.textContent = 'visible min: -   max: -';
+      el.textContent = 'Visible min: - max: -';
       return;
     }
     const fmt = (v) => formatNumber(Number(v));
-    el.textContent = `visible min: ${fmt(minVal)}   max: ${fmt(maxVal)}`;
+    el.textContent = `Visible min: ${fmt(minVal)} max: ${fmt(maxVal)}`;
   }
 
   function clearVisibleRangeTimer() {
@@ -1132,9 +1147,14 @@
   // ── Status ───────────────────────────────────────────────────────────────
   let statusTimer;
   function setStatus(msg) {
-    document.getElementById('status').textContent = msg;
+    const statusEl = document.getElementById('status');
+    if (!statusEl) return;
+    statusEl.textContent = msg;
     clearTimeout(statusTimer);
-    statusTimer = setTimeout(() => { document.getElementById('status').textContent = ''; }, 3500);
+    statusTimer = setTimeout(() => {
+      const el = document.getElementById('status');
+      if (el) el.textContent = '';
+    }, 3500);
   }
 
   // ── Resize ───────────────────────────────────────────────────────────────
