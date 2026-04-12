@@ -49,10 +49,61 @@
                 background: var(--btn-bg); color: var(--btn-fg); font-size: 13px; line-height: 1.3;
                 flex-shrink: 0; }
   #btn-reload:hover { filter: brightness(1.3); }
-  #addr-input { flex: 1; background: var(--input-bg); color: var(--input-fg);
+  #expr-input-wrap { position: relative; flex: 1; min-width: 0; }
+  #addr-input { width: 100%; background: var(--input-bg); color: var(--input-fg);
                 border: 1px solid var(--border); padding: 1px 6px;
-                font-family: monospace; font-size: 12px; min-width: 0; }
+                font-family: var(--vscode-editor-font-family, var(--vscode-font-family, monospace));
+                font-size: 12px; min-width: 0; }
+  #expr-input-wrap.has-history #addr-input { padding-right: 24px; }
   #addr-input:focus { outline: 1px solid var(--btn-active-bg); }
+  #expr-history-btn {
+    display: none;
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    transform: translateY(-50%);
+    width: 12px;
+    height: 12px;
+    border: none;
+    background: transparent;
+    color: var(--index-bg);
+    cursor: pointer;
+    padding: 0;
+    font-family: var(--vscode-editor-font-family, var(--vscode-font-family, monospace));
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.1;
+    opacity: 0.9;
+  }
+  #expr-input-wrap.has-history #expr-history-btn { display: block; }
+  #expr-history-btn:hover { color: var(--input-fg); opacity: 1; }
+  #expr-history-menu {
+    display: none;
+    position: absolute;
+    top: calc(100% + 2px);
+    right: 0;
+    left: 0;
+    max-height: 220px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    background: var(--input-bg);
+    z-index: 30;
+  }
+  #expr-history-menu.open { display: block; }
+  .expr-history-item {
+    width: 100%;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    background: transparent;
+    color: var(--input-fg);
+    text-align: left;
+    padding: 4px 6px;
+    font-family: monospace;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .expr-history-item:last-child { border-bottom: none; }
+  .expr-history-item:hover { background: var(--btn-active-bg); color: var(--btn-active-fg); }
   #range-info { font-size: 10px; color: var(--index-bg); white-space: nowrap; margin-left: 6px; }
 
   /* ── Dim selectors (for ndim > 2) — hidden, replaced by slice suffix + buttons ── */
@@ -135,7 +186,11 @@
 <!-- Address / slice bar -->
 <div id="addr-row">
   <button id="btn-reload" title="Reload / update array data">↺</button>
-  <input id="addr-input" type="text" spellcheck="false" placeholder="varname[row0:row1, col0:col1]">
+  <div id="expr-input-wrap">
+    <input id="addr-input" type="text" spellcheck="false" placeholder="varname[row0:row1, col0:col1]">
+    <button id="expr-history-btn" title="Recent expressions" aria-label="Recent expressions">﹀</button>
+    <div id="expr-history-menu"></div>
+  </div>
   <div id="slice-btns"></div>
   <span id="range-info">visible min: -   max: -</span>
 </div>
@@ -202,6 +257,57 @@
   const history = [];
   let historyIdx = -1;
   let navigatingHistory = false;
+  const recentExpressions = [];
+  const MAX_RECENT_EXPRESSIONS = 15;
+
+  function otherRecentExpressions() {
+    return recentExpressions.filter(expr => expr !== currentExpression);
+  }
+
+  function closeRecentExpressionsMenu() {
+    document.getElementById('expr-history-menu').classList.remove('open');
+  }
+
+  function updateRecentExpressionsDropdown() {
+    const wrap = document.getElementById('expr-input-wrap');
+    const menu = document.getElementById('expr-history-menu');
+    const others = otherRecentExpressions();
+
+    wrap.classList.toggle('has-history', others.length > 0);
+    if (others.length === 0) {
+      closeRecentExpressionsMenu();
+    }
+
+    menu.innerHTML = '';
+    others.forEach((expr) => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'expr-history-item';
+      item.textContent = expr;
+      item.title = expr;
+      item.addEventListener('click', () => {
+        baseShape = null;
+        addrInput.value = expr;
+        loadExpression(expr, 0, 0);
+        rememberView(expr, 0, 0);
+        rememberRecentExpression(expr);
+        closeRecentExpressionsMenu();
+      });
+      menu.appendChild(item);
+    });
+  }
+
+  function rememberRecentExpression(expression) {
+    const expr = (expression || '').trim();
+    if (!expr) return;
+    const idx = recentExpressions.indexOf(expr);
+    if (idx >= 0) recentExpressions.splice(idx, 1);
+    recentExpressions.unshift(expr);
+    if (recentExpressions.length > MAX_RECENT_EXPRESSIONS) {
+      recentExpressions.length = MAX_RECENT_EXPRESSIONS;
+    }
+    updateRecentExpressionsDropdown();
+  }
 
   function rememberView(expression, r0, c0) {
     if (navigatingHistory || !expression) return;
@@ -415,7 +521,9 @@
     const msg = event.data;
     switch (msg.type) {
       case 'loadExpression':
+        rememberRecentExpression(msg.expression);
         loadExpression(msg.expression, 0, 0);
+        updateRecentExpressionsDropdown();
         break;
       case 'meta':       onMeta(msg); break;
       case 'metaError':
@@ -567,6 +675,8 @@
 
   // ── Address bar ──────────────────────────────────────────────────────────
   const addrInput = document.getElementById('addr-input');
+  const exprHistoryBtn = document.getElementById('expr-history-btn');
+  const exprHistoryMenu = document.getElementById('expr-history-menu');
 
   addrInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter')     { e.preventDefault(); commitAddr(false); addrInput.blur(); }
@@ -576,6 +686,16 @@
   });
 
   addrInput.addEventListener('blur', () => { updateAddrBar(); });
+
+  exprHistoryBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (!document.getElementById('expr-input-wrap').classList.contains('has-history')) return;
+    exprHistoryMenu.classList.toggle('open');
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#expr-input-wrap')) closeRecentExpressionsMenu();
+  });
 
   function historyBack() {
     if (historyIdx === -1) {
@@ -645,11 +765,15 @@
     }
     if (!newExpr) return;
 
+    rememberRecentExpression(newExpr);
+
     if (newExpr !== currentExpression || forceReload) {
       loadExpression(newExpr, r0, c0);
     } else {
       scrollTo(r0, c0);
     }
+
+    updateRecentExpressionsDropdown();
 
     // Confirmed user action: create history entry unless it's already the latest one.
     rememberView(newExpr, r0, c0);
@@ -1017,6 +1141,7 @@
   new ResizeObserver(() => { computeVisible(); render(); }).observe(document.getElementById('scroll-host'));
 
   // Signal ready so the extension sends the initial expression
+  updateRecentExpressionsDropdown();
   vscode.postMessage({ type: 'ready' });
 
 })();
