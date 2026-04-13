@@ -1,0 +1,2020 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+<title>Data Browser</title>
+<style>
+  :root {
+    --header-bg: var(--vscode-editorGroupHeader-tabsBackground, #252526);
+    --header-fg: var(--vscode-foreground, #ccc);
+    --cell-bg: var(--vscode-editor-background, #1e1e1e);
+    --cell-fg: var(--vscode-editor-foreground, #d4d4d4);
+    --border: var(--vscode-editorGroup-border, #444);
+    --index-bg: var(--vscode-editorLineNumber-foreground, #858585);
+    --input-bg: var(--vscode-input-background, #3c3c3c);
+    --input-fg: var(--vscode-input-foreground, #cccccc);
+    --btn-bg: var(--vscode-button-secondaryBackground, #3a3d41);
+    --btn-fg: var(--vscode-button-secondaryForeground, #cccccc);
+    --btn-active-bg: var(--vscode-button-background, #0e639c);
+    --btn-active-fg: var(--vscode-button-foreground, #fff);
+    --row-h: 22px;
+    --col-w: 96px;
+    --idx-col-w: 56px;
+    --idx-row-h: 22px;
+    --obj-list-font-size: 13px;
+    --obj-type-font-size: 12px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--vscode-font-family, monospace); font-size: 12px;
+         background: var(--vscode-editor-background, #1e1e1e);
+         color: var(--cell-fg); overflow: hidden; height: 100vh; display: flex; flex-direction: column; }
+
+  /* ── Toolbar (row 2: info/range/colors) ── */
+  #toolbar { display: flex; align-items: center; gap: 8px; padding: 2px 8px;
+             background: var(--header-bg); border-bottom: 1px solid var(--border);
+             min-height: 26px; flex-shrink: 0; }
+  #info-label {
+    font-size: 13px;
+    color: var(--index-bg);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+  #status { display: none; }
+  .btn-group { display: inline-flex; border: 1px solid var(--border); border-radius: 3px; overflow: hidden; }
+  .btn-group button {
+    width: 24px;
+    min-width: 24px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    cursor: pointer;
+    background: var(--btn-bg);
+    color: var(--btn-fg);
+    font-size: 12px;
+    line-height: 1;
+  }
+  .btn-group button.active { background: var(--btn-active-bg); color: var(--btn-active-fg); }
+  .btn-group button:hover:not(.active) { filter: brightness(1.3); }
+
+  #color-btns button {
+    width: 28px;
+    min-width: 28px;
+    padding: 2px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #color-btns button.active {
+    background: var(--btn-bg);
+    outline: 1px solid var(--btn-active-bg);
+    outline-offset: -1px;
+  }
+  #color-btns svg {
+    display: block;
+    fill: none;
+  }
+
+  /* ── Address / slice bar (row 1: expression) ── */
+  #addr-row { display: flex; align-items: center; gap: 4px; padding: 2px 8px;
+              border-bottom: 1px solid var(--border); min-height: 30px; flex-shrink: 0;
+              background: var(--header-bg); }
+  .btn-nav { padding: 0 4px; border: none; background: transparent; cursor: pointer;
+             color: var(--btn-fg); font-size: 18px; line-height: 1;
+             flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+  .btn-nav:hover:not(:disabled) { color: var(--input-fg); }
+  .btn-nav:disabled { opacity: 0.35; cursor: default; }
+  #btn-reload { padding: 1px 7px; border: 1px solid var(--border); border-radius: 3px; cursor: pointer;
+                background: var(--btn-bg); color: var(--btn-fg); font-size: 13px; line-height: 1.3;
+                flex-shrink: 0; }
+  #btn-reload:hover { filter: brightness(1.3); }
+  #expr-input-wrap { position: relative; flex: 1; min-width: 0; }
+  #addr-input { width: 100%; background: var(--input-bg); color: var(--input-fg);
+                border: 1px solid var(--border); padding: 1px 6px;
+                font-family: var(--vscode-editor-font-family, var(--vscode-font-family, monospace));
+                font-size: 12px; min-width: 0; }
+  #expr-input-wrap.has-history #addr-input { padding-right: 24px; }
+  #addr-input:focus { outline: 1px solid var(--btn-active-bg); }
+  #expr-history-btn {
+    display: none;
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    transform: translateY(-50%);
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    color: var(--index-bg);
+    cursor: pointer;
+    padding: 0;
+    opacity: 0.9;
+  }
+  #expr-input-wrap.has-history #expr-history-btn { display: flex; }
+  #expr-history-btn:hover { color: var(--input-fg); opacity: 1; }
+  #expr-history-menu {
+    display: none;
+    position: absolute;
+    top: calc(100% + 2px);
+    right: 0;
+    left: 0;
+    max-height: 220px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    background: var(--input-bg);
+    z-index: 30;
+  }
+  #expr-history-menu.open { display: block; }
+  .expr-history-item {
+    width: 100%;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    background: transparent;
+    color: var(--input-fg);
+    text-align: left;
+    padding: 4px 6px;
+    font-family: monospace;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .expr-history-item:last-child { border-bottom: none; }
+  .expr-history-item:hover { background: var(--btn-active-bg); color: var(--btn-active-fg); }
+  #range-info { font-size: 10px; color: var(--index-bg); white-space: nowrap; margin-left: auto; }
+
+  #mode-toggle {
+    margin-left: auto;
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  #mode-toggle button {
+    min-width: 44px;
+    height: 20px;
+    border: none;
+    padding: 0 6px;
+    background: var(--btn-bg);
+    color: var(--btn-fg);
+    cursor: pointer;
+    font-size: 11px;
+  }
+  #mode-toggle button.active { background: var(--btn-active-bg); color: var(--btn-active-fg); }
+  #mode-toggle button:hover:not(.active) { filter: brightness(1.3); }
+
+  /* ── Dim selectors (for ndim > 2) — hidden, replaced by slice suffix + buttons ── */
+  #dim-row { display: none !important; }
+
+  /* ── Slice index up/down buttons ── */
+  #slice-btns { display: flex; align-items: center; gap: 3px; flex-shrink: 0; }
+  .slice-btn-pair { display: flex; flex-direction: column; gap: 1px; }
+  .slice-btn { padding: 0 3px; border: 1px solid var(--border); border-radius: 2px; cursor: pointer;
+               background: var(--btn-bg); color: var(--btn-fg); font-size: 9px; line-height: 1;
+               height: 11px; min-width: 16px; display: flex; align-items: center; justify-content: center; }
+  .slice-btn:hover { filter: brightness(1.4); }
+
+  /* ── Error state ── */
+  #viewer-error {
+    display: none;
+    margin: 10px 8px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    background: var(--header-bg);
+    color: var(--cell-fg);
+    line-height: 1.45;
+    white-space: normal;
+  }
+
+
+  #tree-host,
+  #scalar-host {
+    display: none;
+    flex: 1;
+    overflow: auto;
+    position: relative;
+    background: var(--cell-bg);
+  }
+
+  .tree-row {
+    display: flex;
+    align-items: center;
+    min-height: var(--row-h);
+    padding: 0 6px;
+    gap: 6px;
+    font-size: var(--obj-list-font-size);
+  }
+  .tree-row.even { background: rgba(128, 128, 128, 0.03); }
+  .tree-row.odd  { background: transparent; }
+  .tree-row:hover { background: rgba(128, 128, 128, 0.08); }
+
+  .tree-row.sticky {
+    position: sticky;
+    z-index: 7;
+    background: var(--header-bg);
+    border-bottom: 1px solid var(--border);
+  }
+  .tree-indent { width: 14px; flex-shrink: 0; }
+  .tree-expand {
+    width: 20px;
+    height: 20px;
+    color: var(--btn-fg);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    flex-shrink: 0;
+    transition: transform 0.1s ease;
+  }
+  .tree-expand.expanded { transform: rotate(90deg); }
+  .tree-expand.placeholder {
+    visibility: hidden;
+    pointer-events: none;
+  }
+  .tree-key {
+    color: #3794ff; /* Decent blue for keys */
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .tree-type {
+    color: #4ec9b0; /* default class/type color */
+    font-size: var(--obj-type-font-size);
+    flex-shrink: 0;
+    opacity: 0.85;
+  }
+  .tree-type.type-str { color: #ce9178; }
+  .tree-type.type-number { color: #b5cea8; }
+  .tree-type.type-bool { color: #569cd6; }
+  .tree-type.type-group { color: var(--index-bg); font-style: italic; }
+  .tree-repr {
+    color: var(--cell-fg);
+    opacity: 0.9;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    flex: 1;
+  }
+  .tree-repr.string { color: #ce9178; } /* String color */
+  .tree-repr.number { color: #b5cea8; } /* Number color */
+  .tree-repr.bool   { color: #569cd6; } /* Keyword color */
+
+  .tree-load-more {
+    border: 1px solid var(--border);
+    background: var(--btn-bg);
+    color: var(--btn-fg);
+    padding: 2px 8px;
+    margin: 8px;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+
+  #scalar-host { padding: 12px; display: flex; flex-direction: column; flex: 1; height: 100%; box-sizing: border-box; }
+  #scalar-type { color: var(--index-bg); margin-bottom: 6px; flex-shrink: 0; }
+  #scalar-input {
+    width: 100%;
+    background: var(--input-bg);
+    color: var(--input-fg);
+    border: 1px solid var(--border);
+    padding: 6px 8px;
+    font-family: var(--vscode-editor-font-family, var(--vscode-font-family, monospace));
+    font-size: 12px;
+    resize: none;
+    box-sizing: border-box;
+  }
+
+  #scalar-input.scalar-string {
+    flex: 1;
+    min-height: 100px;
+  }
+
+  #scalar-input.scalar-oneline {
+    flex: none;
+    height: 32px;
+    line-height: 18px;
+    white-space: nowrap;
+    overflow-x: auto;
+  }
+
+  #scalar-input.ok { outline: 1px solid #4caf50 !important; outline-offset: -1px; }
+  #scalar-input.err { outline: 1px solid #f44336 !important; outline-offset: -1px; }
+  #scalar-input:focus { outline: 1px solid var(--btn-active-bg); outline-offset: -1px; }
+  #scalar-input[readonly] { cursor: default; }
+  #scalar-input[readonly]:focus { outline: 1px solid transparent; }
+  #scalar-input.changed { outline: 1px solid #e38e1b !important; outline-offset: -1px; }
+  #scalar-input.changed:focus { outline: 1px solid #e38e1b !important; outline-offset: -1px; }
+  #scalar-help { color: var(--index-bg); font-size: 11px; margin-top: 6px; flex-shrink: 0; }
+  /* ── Main scroll container ── */
+  #scroll-host { flex: 1; overflow: auto; position: relative; outline: none; }
+  #phantom { position: absolute; top: 0; left: 0; pointer-events: none; }
+
+  /* ── Sticky rendering layer ── */
+  #grid-wrap { position: sticky; top: 0; left: 0; display: inline-flex; flex-direction: column;
+               background: var(--cell-bg); }
+
+  /* Column index row */
+  #col-idx-row { display: flex; position: sticky; top: 0; z-index: 10; }
+  .col-idx-cell { width: var(--col-w); min-width: var(--col-w); height: var(--idx-row-h);
+                  line-height: var(--idx-row-h); text-align: center; font-size: 10px;
+                  color: var(--index-bg); background: var(--header-bg);
+                  border-bottom: 1px solid var(--border); border-right: 1px solid var(--border);
+                  overflow: hidden; white-space: nowrap; flex-shrink: 0; }
+  .corner-cell { width: var(--idx-col-w); min-width: var(--idx-col-w); height: var(--idx-row-h);
+                 background: var(--header-bg); border-bottom: 1px solid var(--border);
+                 border-right: 1px solid var(--border); flex-shrink: 0; }
+
+  /* Data rows */
+  .data-row { display: flex; }
+  .row-idx-cell { width: var(--idx-col-w); min-width: var(--idx-col-w); height: var(--row-h);
+                  line-height: var(--row-h); text-align: right; padding-right: 6px;
+                  font-size: 10px; color: var(--index-bg); background: var(--header-bg);
+                  border-bottom: 1px solid var(--border); border-right: 1px solid var(--border);
+                  position: sticky; left: 0; z-index: 5; flex-shrink: 0; }
+  .data-cell { width: var(--col-w); min-width: var(--col-w); height: var(--row-h);
+               line-height: var(--row-h); text-align: right; padding: 0 6px;
+               border-bottom: 1px solid var(--border); border-right: 1px solid var(--border);
+               overflow: hidden; white-space: nowrap; cursor: default; flex-shrink: 0;
+               user-select: none; }
+  .data-cell.loading { color: var(--index-bg); }
+  .data-cell.editing { padding: 0; }
+  .data-cell input { width: 100%; height: 100%; background: var(--input-bg); color: var(--input-fg);
+                     border: 1px solid var(--btn-active-bg); font-family: monospace;
+                     font-size: 12px; text-align: right; padding: 0 4px; }
+  .data-cell.edit-ok { outline: 1px solid #4caf50; }
+  .data-cell.edit-err { outline: 1px solid #f44336; }
+</style>
+</head>
+<body>
+
+<!-- Address / slice bar (row 1) -->
+<div id="addr-row">
+  <button id="btn-back" class="btn-nav" title="Navigate back (Alt+Left)" disabled>🡠</button>
+  <button id="btn-forward" class="btn-nav" title="Navigate forward (Alt+Right)" disabled>🡢</button>
+  <button id="btn-reload" title="Reload / update array data">↺</button>
+  <div id="expr-input-wrap">
+    <input id="addr-input" type="text" spellcheck="false" placeholder="varname[row0:row1, col0:col1]">
+    <button id="expr-history-btn" title="Recent expressions" aria-label="Recent expressions"><svg width="20" height="20" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M7.976 10.072l3.54-3.54-.708-.706L8 8.658 5.168 5.826l-.708.706 3.54 3.54h-.024z" style="transform: scale(1.3); transform-origin: center;"/></svg></button>
+    <div id="expr-history-menu"></div>
+  </div>
+  <div id="slice-btns"></div>
+</div>
+
+<!-- Toolbar (row 2) -->
+<div id="toolbar">
+  <span id="info-label">—</span>
+  <span id="status" aria-hidden="true"></span>
+  <span id="range-info">Visible min: - max: -</span>
+  <div class="btn-group" id="color-btns">
+    <button data-mode="none" title="No color" aria-label="No color">
+      <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><line x1="2" y1="10" x2="18" y2="10" stroke="gray" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+    <button data-mode="sym" title="Symmetric diverging (blue↔white↔red, white=0)" aria-label="Symmetric diverging">
+      <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><line x1="2" y1="10" x2="18" y2="10" stroke="gray" stroke-width="2" stroke-linecap="round"/><line x1="4.5" y1="13" x2="4.5" y2="16" stroke="#2f81f7" stroke-width="3" stroke-linecap="round"/><line x1="10" y1="8.5" x2="10" y2="11.5" stroke="#e0e0e0" stroke-width="3" stroke-linecap="round"/><line x1="15.5" y1="7" x2="15.5" y2="4" stroke="#f14c4c" stroke-width="3" stroke-linecap="round"/></svg>
+    </button>
+    <button data-mode="range" title="Range (dark purple→teal→yellow)" aria-label="Range" class="active">
+      <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><line x1="2" y1="16" x2="18" y2="16" stroke="gray" stroke-width="2" stroke-linecap="round"/><line x1="4.5" y1="13" x2="4.5" y2="10" stroke="#513f87" stroke-width="3" stroke-linecap="round"/><line x1="10" y1="13" x2="10" y2="7" stroke="#21918c" stroke-width="3" stroke-linecap="round"/><line x1="15.5" y1="13" x2="15.5" y2="4" stroke="#fde725" stroke-width="3" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+  <div id="mode-toggle" title="Switch between data and object mode">
+    <button id="mode-data" data-mode="data" class="active">Data</button>
+    <button id="mode-object" data-mode="object">Obj</button>
+  </div>
+</div>
+
+<!-- Dimension selectors (hidden for 1D/2D) -->
+<div id="dim-row"></div>
+
+<!-- Error area (shown for unsupported values like NumPy scalars) -->
+<div id="viewer-error"></div>
+
+<div id="tree-host"></div>
+
+<div id="scalar-host">
+  <textarea id="scalar-input" spellcheck="false" placeholder="Edit value"></textarea>
+  <div id="scalar-help">Esc to cancel</div>
+</div>
+
+<!-- Scroll host -->
+<div id="scroll-host" tabindex="0">
+  <div id="phantom"></div>
+  <div id="grid-wrap">
+    <div id="col-idx-row"></div>
+    <div id="data-rows"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const vscode = acquireVsCodeApi();
+
+  // ── Config ──────────────────────────────────────────────────────────────
+  const TILE_ROWS = 50;
+  const TILE_COLS = 50;
+  const BUFFER_TILE_SPAN = 3;
+
+  const ROW_H = 22;
+  const COL_W = 96;
+  const IDX_COL_W = 56;
+  const IDX_ROW_H = 22;
+  const DISPLAY_DECIMALS = 5;
+  const SCROLL_SETTLE_MS = 160;
+  const CHUNK_RANGE_UPDATE_MS = 60;
+
+  // ── State ────────────────────────────────────────────────────────────────
+  let currentExpression = '';
+  let meta = null;
+  let colorMode = 'range';
+  let colorMin = null;
+  let colorMax = null;
+  let dimIndices = [];       // always [] now; slice indices live in the expression itself
+  let baseShape = null;      // shape of the base expression when ndim>2 auto-conversion happened
+  let viewR0 = 0;
+  let viewC0 = 0;
+  let visRows = 1;
+  let visCols = 1;
+  let is1D = false;
+  let currentBufferKeys = new Set();
+  let viewerMode = 'data';
+  let currentInspect = null;
+
+  const TREE_PAGE_SIZE = 100;
+  let treeNodes = new Map();
+  let treeRootId = null;
+  let nodeCounter = 0;
+  let includePrivateRoot = false;
+
+  const scalarReqMap = new Map();
+
+  const chunkCache = new Map();
+  const pendingChunks = new Set();
+
+  let bufferTileR0 = 0;
+  let bufferTileC0 = 0;
+  let scrollRafPending = false;
+  let syncingScroll = false;
+  let visibleRangeTimer = null;
+  let scrollingActive = false;
+
+  // ── History ──────────────────────────────────────────────────────────────
+  let history = [];
+  let historyIdx = -1;
+  let navigatingHistory = false;
+  const recentExpressions = [];
+  const MAX_RECENT_EXPRESSIONS = 15;
+
+  function otherRecentExpressions() {
+    return recentExpressions.filter(expr => expr !== currentExpression);
+  }
+
+  function closeRecentExpressionsMenu() {
+    document.getElementById('expr-history-menu').classList.remove('open');
+  }
+
+  function updateRecentExpressionsDropdown() {
+    const wrap = document.getElementById('expr-input-wrap');
+    const menu = document.getElementById('expr-history-menu');
+    const others = otherRecentExpressions();
+
+    wrap.classList.toggle('has-history', others.length > 0);
+    if (others.length === 0) {
+      closeRecentExpressionsMenu();
+    }
+
+    menu.innerHTML = '';
+    others.forEach((expr) => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'expr-history-item';
+      item.textContent = expr;
+      item.title = expr;
+      item.addEventListener('click', () => {
+        baseShape = null;
+        addrInput.value = expr;
+        navigateToExpression(expr, false);
+        rememberRecentExpression(expr);
+        closeRecentExpressionsMenu();
+      });
+      menu.appendChild(item);
+    });
+  }
+
+  function rememberRecentExpression(expression) {
+    const expr = (expression || '').trim();
+    if (!expr) return;
+    const idx = recentExpressions.indexOf(expr);
+    if (idx >= 0) recentExpressions.splice(idx, 1);
+    recentExpressions.unshift(expr);
+    if (recentExpressions.length > MAX_RECENT_EXPRESSIONS) {
+      recentExpressions.length = MAX_RECENT_EXPRESSIONS;
+    }
+    updateRecentExpressionsDropdown();
+  }
+
+  function updateCurrentHistoryState() {
+      if (historyIdx >= 0 && historyIdx < history.length) {
+          const entry = history[historyIdx];
+          entry.r0 = viewR0 || 0;
+          entry.c0 = viewC0 || 0;
+          entry.mode = viewerMode;
+          entry.includePrivateRoot = includePrivateRoot;
+          entry.treeNodes = new Map(treeNodes);
+          entry.treeRootId = treeRootId;
+          entry.inspect = currentInspect;
+          entry.meta = meta;
+      }
+  }
+
+  function navigateToExpression(expr, isAutoSlice = false, initialR0 = 0, initialC0 = 0) {
+      expr = (expr || '').trim();
+      if (!isAutoSlice) updateCurrentHistoryState();
+
+      if (!isAutoSlice && historyIdx >= 0 && historyIdx < history.length - 1) {
+          // Branching from the past -> duplicate current into the end history stack
+          const currentEntry = history[historyIdx];
+          history.push(Object.assign({}, currentEntry));
+      }
+
+      const newEntry = {
+          expression: expr, r0: initialR0, c0: initialC0,
+          mode: viewerMode, includePrivateRoot: false, treeNodes: null, treeRootId: null, inspect: null, meta: null
+      };
+
+      if (isAutoSlice && historyIdx === history.length - 1 && history.length > 0) {
+          // Automatic slice override top history
+          history[history.length - 1] = newEntry;
+      } else {
+          history.push(newEntry);
+          historyIdx = history.length - 1;
+      }
+      updateNavButtons();
+
+      addrInput.value = expr;
+      doLoadExpression(expr, initialR0, initialC0);
+  }
+
+  function restoreHistoryEntry(idx) {
+      navigatingHistory = true;
+      try {
+          const entry = history[idx];
+        const targetMode = entry.mode === 'object' ? 'object' : 'data';
+        setMode(targetMode);
+        includePrivateRoot = !!entry.includePrivateRoot;
+
+        if (entry.treeNodes && entry.treeRootId) {
+              currentExpression = entry.expression;
+              viewR0 = entry.r0 || 0; viewC0 = entry.c0 || 0;
+              treeNodes = new Map(entry.treeNodes);
+              treeRootId = entry.treeRootId;
+              currentInspect = entry.inspect || null;
+              // Restore nodeCounter past the highest existing node ID to prevent new nodes
+              // from overwriting existing ones (e.g. the root) when expanding after going back.
+              nodeCounter = 0;
+              for (const key of treeNodes.keys()) {
+                  const m = key.match(/^node_(\d+)$/);
+                  if (m) nodeCounter = Math.max(nodeCounter, parseInt(m[1]));
+              }
+              setHostVisibility('tree');
+              setInfoLabelFromInspect(currentInspect);
+              renderTree();
+              } else if (entry.meta) {
+              currentExpression = entry.expression;
+              viewR0 = entry.r0 || 0; viewC0 = entry.c0 || 0;
+              meta = entry.meta;
+              setHostVisibility('grid');
+              setRangeInfo(meta.shape, null);
+              vscode.postMessage({ type: 'requestMeta', expression: currentExpression, mode: viewerMode });
+              } else if (entry.inspect && entry.inspect.is_editable_scalar) {
+              currentExpression = entry.expression;
+              renderScalarEditor(entry.inspect);
+              setInfoLabelFromInspect(entry.inspect);
+          } else {
+              doLoadExpression(entry.expression, entry.r0, entry.c0);
+          }
+      } finally {
+          navigatingHistory = false;
+          updateNavButtons();
+      }
+  }
+
+  function updateNavButtons() {
+    document.getElementById('btn-back').disabled = historyIdx <= 0;
+    document.getElementById('btn-forward').disabled = historyIdx < 0 || historyIdx >= history.length - 1;
+  }
+
+  // ── Viridis LUT ─────────────────────────────────────────────────────────
+  const VIRIDIS = (function() {
+    const stops = [
+      [68,1,84],[72,20,103],[79,42,121],[81,63,135],[84,84,139],[85,104,143],
+      [86,122,146],[87,139,149],[88,156,150],[89,173,148],[93,188,143],[100,203,135],
+      [113,215,125],[128,225,111],[148,232,93],[172,237,72],[198,239,52],[224,238,35],
+      [253,231,37]
+    ];
+    const lut = [];
+    for (let i = 0; i < 256; i++) {
+      const t = i / 255 * (stops.length - 1);
+      const lo = Math.floor(t), hi = Math.min(stops.length - 1, lo + 1);
+      const f = t - lo;
+      lut.push(`rgb(${Math.round(stops[lo][0]+f*(stops[hi][0]-stops[lo][0]))},${Math.round(stops[lo][1]+f*(stops[hi][1]-stops[lo][1]))},${Math.round(stops[lo][2]+f*(stops[hi][2]-stops[lo][2]))})`);
+    }
+    return lut;
+  })();
+
+  function valueToColor(v) {
+    if (typeof v !== 'number' || isNaN(v) || !isFinite(v)) return '';
+    if (colorMin === null || colorMax === null) return '';
+    if (colorMode === 'none') return '';
+    if (colorMode === 'sym') {
+      const extreme = Math.max(Math.abs(colorMin), Math.abs(colorMax));
+      if (extreme === 0) return '';
+      const t = v / extreme;
+      if (t >= 0) {
+        const l = Math.round(100 - 40 * Math.min(1, t));
+        return symLightnessToRgb(0, l);
+      }
+      const l = Math.round(100 + 40 * Math.max(-1, t));
+      return symLightnessToRgb(220, l);
+    }
+    if (colorMode === 'range') {
+      if (colorMax === colorMin) return VIRIDIS[127];
+      return VIRIDIS[Math.max(0, Math.min(255, Math.round((v - colorMin) / (colorMax - colorMin) * 255)))];
+    }
+    return '';
+  }
+
+  function needsDarkText(cssColor) {
+    if (!cssColor) return false;
+    const rgbMatch = cssColor.match(/rgb\((\d+),(\d+),(\d+)\)/i);
+    if (!rgbMatch) return false;
+    const mean = (+rgbMatch[1] + +rgbMatch[2] + +rgbMatch[3]) / 3;
+    return mean > 128;
+  }
+
+  function symLightnessToRgb(hue, lightnessPct) {
+    const sat = 0.9;
+    const l = Math.max(0, Math.min(1, lightnessPct / 100));
+    const c = (1 - Math.abs(2 * l - 1)) * sat;
+    const hh = ((hue % 360) + 360) % 360 / 60;
+    const x = c * (1 - Math.abs(hh % 2 - 1));
+    let r1 = 0, g1 = 0, b1 = 0;
+
+    if (hh >= 0 && hh < 1) { r1 = c; g1 = x; }
+    else if (hh < 2) { r1 = x; g1 = c; }
+    else if (hh < 3) { g1 = c; b1 = x; }
+    else if (hh < 4) { g1 = x; b1 = c; }
+    else if (hh < 5) { r1 = x; b1 = c; }
+    else { r1 = c; b1 = x; }
+
+    const m = l - c / 2;
+    const r = Math.round((r1 + m) * 255);
+    const g = Math.round((g1 + m) * 255);
+    const b = Math.round((b1 + m) * 255);
+    return `rgb(${r},${g},${b})`;
+  }
+
+  function refreshColorSwatches() {
+    // No-op for simplistic SVG buttons
+  }
+
+  function formatNumber(v) {
+    if (!Number.isFinite(v)) return String(v);
+    if (Number.isInteger(v)) return String(v);
+    return v.toFixed(DISPLAY_DECIMALS);
+  }
+  // ── Slice-suffix helpers ───────────────────────────────────────────────
+  function isSimpleIdentifier(s) {
+    return /^[A-Za-z_][A-Za-z0-9_]*$/.test(s.trim());
+  }
+
+  // Returns the index of the '[' that opens the last [...] at the end of expr, or -1.
+  function findSliceSuffixStart(expr) {
+    if (!expr.endsWith(']')) return -1;
+    let depth = 0;
+    for (let i = expr.length - 1; i >= 0; i--) {
+      if (expr[i] === ']') depth++;
+      else if (expr[i] === '[') { depth--; if (depth === 0) return i; }
+    }
+    return -1;
+  }
+
+  // Builds e.g. A[(0),(1),:,:]  or  (complex)[(0),(1),:,:]
+  function buildSlicedExpression(base, indices) {
+    const b = base.trim();
+    let wrapped;
+    if (isSimpleIdentifier(b) || (b.startsWith('(') && b.endsWith(')'))) {
+      wrapped = b;
+    } else {
+      wrapped = `(${b})`;
+    }
+    const parts = [...indices.map(i => `(${i})`), ':', ':'];
+    return `${wrapped}[${parts.join(',')}]`;
+  }
+
+  // Rebuilds the slice-index up/down buttons based on the number of (integer) patterns
+  // found inside the [...] suffix of the current addr-input value.
+  function updateSliceButtons() {
+    const expr = addrInput.value;
+    const suffixStart = findSliceSuffixStart(expr);
+    let numDims = 0;
+    if (suffixStart >= 0) {
+      const sliceContent = expr.slice(suffixStart + 1, -1);
+      const matches = sliceContent.match(/\(\d+\)/g);
+      numDims = matches ? matches.length : 0;
+    }
+    const container = document.getElementById('slice-btns');
+    if (container.children.length === numDims) return; // nothing changed
+    container.innerHTML = '';
+    for (let d = 0; d < numDims; d++) {
+      const pair = document.createElement('div');
+      pair.className = 'slice-btn-pair';
+      const up = document.createElement('button');
+      up.className = 'slice-btn'; up.dataset.dim = d; up.dataset.dir = '1';
+      up.textContent = '\u25b2'; up.title = `Increment index of extra dim ${d}`;
+      const dn = document.createElement('button');
+      dn.className = 'slice-btn'; dn.dataset.dim = d; dn.dataset.dir = '-1';
+      dn.textContent = '\u25bc'; dn.title = `Decrement index of extra dim ${d}`;
+      pair.appendChild(up); pair.appendChild(dn);
+      container.appendChild(pair);
+    }
+  }
+
+  function setMode(mode) {
+    viewerMode = mode === 'object' ? 'object' : 'data';
+    document.getElementById('mode-data').classList.toggle('active', viewerMode === 'data');
+    document.getElementById('mode-object').classList.toggle('active', viewerMode === 'object');
+  }
+
+  function setHostVisibility(mode) {
+    const grid = document.getElementById('scroll-host');
+    const tree = document.getElementById('tree-host');
+    const scalar = document.getElementById('scalar-host');
+    const colorBtns = document.getElementById('color-btns');
+    const rangeInfo = document.getElementById('range-info');
+    const sliceBtns = document.getElementById('slice-btns');
+
+    grid.style.display = mode === 'grid' ? 'block' : 'none';
+    tree.style.display = mode === 'tree' ? 'block' : 'none';
+    scalar.style.display = mode === 'scalar' ? 'flex' : 'none';
+
+    const arrayControlsVisible = mode === 'grid';
+    colorBtns.style.display = arrayControlsVisible ? 'inline-flex' : 'none';
+    rangeInfo.style.display = arrayControlsVisible ? 'inline' : 'none';
+    sliceBtns.style.display = arrayControlsVisible ? 'flex' : 'none';
+  }
+
+  function resetTreeState() {
+    treeNodes.clear();
+    treeRootId = null;
+    nodeCounter = 0;
+    includePrivateRoot = false;
+    document.getElementById('tree-host').innerHTML = '';
+  }
+
+  function nextNodeId() {
+    nodeCounter += 1;
+    return `node_${nodeCounter}`;
+  }
+
+  function combineExpression(baseExpr, accessor) {
+    if (!accessor) return null;
+    if (!baseExpr) {
+      return accessor.startsWith('.') ? accessor.slice(1) : accessor;
+    }
+    return `${baseExpr}${accessor}`;
+  }
+
+  function setInfoLabelFromInspect(inspect) {
+    const info = document.getElementById('info-label');
+    if (!inspect) {
+      info.textContent = '—';
+      return;
+    }
+    const parts = [inspect.type || 'unknown'];
+    if (inspect.dtype) parts.push(inspect.dtype);
+    if (inspect.shape) parts.push(inspect.shape.replace(/[()]/g, '').replace(/,\s*$/, '').replace(/,\s*/g, ' × '));
+    if (viewerMode === 'object' && typeof inspect.total_count === 'number') {
+      parts.push(`(${inspect.total_count} attributes)`);
+    } else if (viewerMode === 'data') {
+      if (inspect.type === 'str' && typeof inspect.str_value === 'string') {
+        const n = inspect.str_value.length;
+        parts.push(`(${n} character${n === 1 ? '' : 's'})`);
+      } else if ((inspect.type === 'dict' || inspect.type === 'list') && typeof inspect.total_count === 'number') {
+        const n = inspect.total_count;
+        parts.push(`(${n} item${n === 1 ? '' : 's'})`);
+      } else if (typeof inspect.total_count === 'number' && inspect.is_container) {
+        const n = inspect.total_count;
+        parts.push(`(${n} item${n === 1 ? '' : 's'})`);
+      }
+    }
+    info.textContent = parts.join('  ');
+  }
+
+  function renderScalarEditor(inspect) {
+    setHostVisibility('scalar');
+    const input = document.getElementById('scalar-input');
+    const helpEl = document.getElementById('scalar-help');
+
+    input.value = inspect.scalar_value ?? '';
+    input.readOnly = false;
+    input.dataset.initialValue = input.value;
+    input.classList.remove('changed', 'ok', 'err');
+
+    if (inspect.type === 'str') {
+      input.classList.add('scalar-string');
+      input.classList.remove('scalar-oneline');
+      helpEl.textContent = 'Shift+Enter to update, Enter for new line. Esc to cancel.';
+    } else {
+      input.classList.add('scalar-oneline');
+      input.classList.remove('scalar-string');
+      helpEl.textContent = 'Enter to update. Esc to cancel.';
+    }
+  }
+
+  function renderReadOnlyScalar(inspect) {
+    setHostVisibility('scalar');
+    const input = document.getElementById('scalar-input');
+    const helpEl = document.getElementById('scalar-help');
+
+    input.value = inspect.str_value ?? inspect.scalar_value ?? '';
+    input.readOnly = true;
+    input.dataset.initialValue = input.value;
+    input.classList.remove('changed', 'ok', 'err', 'scalar-oneline');
+    input.classList.add('scalar-string');
+
+    helpEl.textContent = 'Read-only string representation.';
+  }
+
+  function createRootTree(inspect) {
+    resetTreeState();
+    const rootId = nextNodeId();
+    treeRootId = rootId;
+    const items = inspect.children || [];
+
+    // Convert backend children to tree nodes for root
+    const rootChildren = items.map(c => {
+        const cNode = {
+            id: nextNodeId(),
+            expression: c.is_private_group ? currentExpression : combineExpression(currentExpression, c.accessor),
+            accessor: c.accessor,
+            key: c.key,
+            type: c.type,
+            repr: c.repr,
+            depth: 0,
+            expanded: false,
+            canExpand: viewerMode === 'data' ? (!!c.is_sized && c.type !== 'ndarray' && c.type !== 'Tensor') : !!c.is_expandable,
+            childrenLoaded: false,
+            children: [],
+            loadedCount: 0,
+            totalCount: 0,
+            is_private_group: !!c.is_private_group
+        };
+        treeNodes.set(cNode.id, cNode);
+        return cNode;
+    });
+
+    treeNodes.set(rootId, {
+      id: rootId,
+      expression: currentExpression,
+      key: currentExpression || '(globals)',
+      depth: -1,
+      expanded: true,
+      children: rootChildren,
+      loadedCount: rootChildren.length,
+      totalCount: inspect.total_count || rootChildren.length,
+      includePrivate: false,
+      type: inspect.type
+    });
+    setHostVisibility('tree');
+    renderTree();
+  }
+
+  function renderTree() {
+    const host = document.getElementById('tree-host');
+    host.innerHTML = '';
+    if (!treeRootId || !treeNodes.has(treeRootId)) return;
+
+    let rowIndex = 0;
+    const stack = [treeNodes.get(treeRootId)];
+    while (stack.length) {
+      const node = stack.pop();
+
+      if (node.depth === -1) {
+        if (node.expanded && Array.isArray(node.children)) {
+          for (let i = node.children.length - 1; i >= 0; i--) {
+            stack.push(node.children[i]);
+          }
+          if (node.loadedCount < node.totalCount) {
+            const loadMoreRow = document.createElement('div');
+            loadMoreRow.className = 'tree-row ' + (rowIndex % 2 === 0 ? 'even' : 'odd');
+            rowIndex++;
+            const loadMore = document.createElement('button');
+            loadMore.className = 'tree-load-more';
+            loadMore.textContent = `Load more (${node.loadedCount}/${node.totalCount})`;
+            loadMore.addEventListener('click', () => loadMoreChildren(node.id));
+            loadMoreRow.appendChild(loadMore);
+            host.appendChild(loadMoreRow);
+          }
+        }
+        continue;
+      }
+
+      const row = document.createElement('div');
+      row.className = 'tree-row ' + (rowIndex % 2 === 0 ? 'even' : 'odd');
+      rowIndex++;
+
+      if (node.depth < 5 && node.expanded) {
+        row.classList.add('sticky');
+        row.style.top = `${node.depth * ROW_H}px`;
+      }
+
+      for (let i = 0; i < node.depth; i++) {
+        const indent = document.createElement('span');
+        indent.className = 'tree-indent';
+        row.appendChild(indent);
+      }
+
+      const isPrivateGroup = !!node.is_private_group;
+      const canExpand = !!node.canExpand && !isPrivateGroup;
+      const exp = document.createElement('span');
+      exp.className = `tree-expand${canExpand ? '' : ' placeholder'}`;
+      if (node.expanded && !isPrivateGroup) exp.classList.add('expanded');
+      exp.innerHTML = '<svg width="20" height="20" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M10.072 8l-3.54 3.54-.706-.708L8.658 8 5.826 5.168l.706-.708L10.072 8z" style="transform: scale(1.3); transform-origin: center;"/></svg>';
+      if (canExpand) {
+        exp.addEventListener('click', (e) => {
+          e.stopPropagation();
+          toggleTreeNode(node.id);
+        });
+      }
+      row.appendChild(exp);
+
+      const key = document.createElement('span');
+      key.className = 'tree-key';
+      key.textContent = String(node.key);
+      if (node.expression) {
+        key.title = node.expression;
+      }
+
+      // Make the entire row clickable instead of just the key
+      if (isPrivateGroup) {
+        row.style.cursor = 'pointer';
+        row.addEventListener('click', (e) => {
+          e.stopPropagation();
+          toggleTreeNode(node.id);
+        });
+      } else if (node.accessor || (node.depth === 0 && node.expression)) {
+        row.style.cursor = 'pointer';
+        row.addEventListener('click', () => {
+          addrInput.value = node.expression;
+          navigateToExpression(node.expression, false);
+          rememberRecentExpression(node.expression);
+        });
+      }
+      row.appendChild(key);
+
+      // Private-group placeholder rows are a UI affordance; hide the type badge for them.
+      if (!(isPrivateGroup && node.type === 'group')) {
+        const type = document.createElement('span');
+        type.className = 'tree-type';
+        type.textContent = node.type || 'unknown';
+        if (node.type === 'str') type.classList.add('type-str');
+        else if (node.type === 'int' || node.type === 'float' || node.type === 'complex') type.classList.add('type-number');
+        else if (node.type === 'bool') type.classList.add('type-bool');
+        else if (node.type === 'group') type.classList.add('type-group');
+        row.appendChild(type);
+      }
+
+      const repr = document.createElement('span');
+      repr.className = 'tree-repr';
+      const rText = (node.repr || '');
+      repr.textContent = rText;
+
+      // Basic syntax highlighting for repr
+      if (node.type === 'str') repr.classList.add('string');
+      else if (node.type === 'int' || node.type === 'float' || node.type === 'complex') repr.classList.add('number');
+      else if (node.type === 'bool') repr.classList.add('bool');
+      else if (rText.startsWith("'") || rText.startsWith('"')) repr.classList.add('string');
+
+      row.appendChild(repr);
+
+      host.appendChild(row);
+
+      if (node.expanded && Array.isArray(node.children)) {
+        for (let i = node.children.length - 1; i >= 0; i--) {
+          stack.push(node.children[i]);
+        }
+        if (node.loadedCount < node.totalCount) {
+          const loadMoreRow = document.createElement('div');
+          loadMoreRow.className = 'tree-row ' + (rowIndex % 2 === 0 ? 'even' : 'odd');
+          rowIndex++;
+          for(let i=0; i<=node.depth; i++) loadMoreRow.appendChild(document.createElement('span')).className='tree-indent';
+          const loadMore = document.createElement('button');
+          loadMore.className = 'tree-load-more';
+          loadMore.textContent = `Load more (${node.loadedCount}/${node.totalCount})`;
+          loadMore.addEventListener('click', () => loadMoreChildren(node.id));
+          loadMoreRow.appendChild(loadMore);
+          host.appendChild(loadMoreRow);
+        }
+      }
+    }
+  }
+
+  function toggleTreeNode(nodeId) {
+    const node = treeNodes.get(nodeId);
+    if (!node) return;
+    node.expanded = !node.expanded;
+    if (node.expanded && !node.childrenLoaded && node.canExpand) {
+      requestChildren(nodeId, 0, TREE_PAGE_SIZE, !!node.includePrivate);
+      return;
+    }
+    renderTree();
+  }
+
+  function loadMoreChildren(nodeId) {
+    const node = treeNodes.get(nodeId);
+    if (!node) return;
+    requestChildren(nodeId, node.loadedCount || 0, TREE_PAGE_SIZE, !!node.includePrivate);
+  }
+
+  function requestChildren(nodeId, offset, limit, includePrivate) {
+    const node = treeNodes.get(nodeId);
+    if (!node) return;
+
+    let expr;
+    if (node.depth === 0 && !currentExpression) {
+        expr = "";
+    } else {
+        expr = node.expression || "";
+    }
+
+    vscode.postMessage({
+      type: 'requestChildren',
+      expression: expr,
+      mode: viewerMode,
+      offset: offset || 0,
+      limit: limit || TREE_PAGE_SIZE,
+      includePrivate: !!includePrivate,
+      nodeId
+    });
+  }
+
+  function appendChildren(nodeId, inspect) {
+    const node = treeNodes.get(nodeId);
+    if (!node || !inspect) return;
+    const newChildren = [];
+    (inspect.children || []).forEach((child) => {
+      let childExpression = null;
+      if (child.is_private_group) {
+        childExpression = node.expression;
+      } else if (typeof child.accessor === 'string') {
+        childExpression = combineExpression(node.expression, child.accessor);
+      }
+      const childNode = {
+        id: nextNodeId(),
+        expression: childExpression,
+        accessor: child.accessor,
+        key: child.key,
+        type: child.type,
+        repr: child.repr,
+        depth: node.depth + 1,
+        expanded: false,
+        canExpand: viewerMode === 'data' ? (!!child.is_sized && child.type !== 'ndarray' && child.type !== 'Tensor') : !!child.is_expandable,
+        childrenLoaded: false,
+        children: [],
+        loadedCount: 0,
+        totalCount: 0,
+        is_private_group: !!child.is_private_group
+      };
+      treeNodes.set(childNode.id, childNode);
+      newChildren.push(childNode);
+    });
+    if (!Array.isArray(node.children) || inspect.offset === 0) {
+      node.children = newChildren;
+    } else {
+      node.children = node.children.concat(newChildren);
+    }
+    node.loadedCount = (inspect.offset || 0) + (inspect.children || []).length;
+    node.totalCount = inspect.total_count || node.loadedCount;
+    node.childrenLoaded = true;
+
+    // Update root info label if we expanded root attributes (e.g. private group opened)
+    if (node.id === treeRootId && currentInspect) {
+        currentInspect.total_count = node.totalCount;
+        setInfoLabelFromInspect(currentInspect);
+    }
+
+    renderTree();
+  }
+
+  function toggleTreeNode(nodeId) {
+    const node = treeNodes.get(nodeId);
+    if (!node) return;
+
+    if (node.is_private_group) {
+        // Special Case: (globals) root
+        if (node.depth === 1 && (!treeRootId || treeNodes.get(treeRootId).key === '(globals)')) {
+            includePrivateRoot = true;
+            if (historyIdx >= 0 && historyIdx < history.length) {
+                history[historyIdx].includePrivateRoot = true;
+                history[historyIdx].treeNodes = null;
+                history[historyIdx].treeRootId = null;
+            }
+            startInspectRoot();
+            return;
+        }
+
+        // Parent Case
+        let parentNode = null;
+        for (const p of treeNodes.values()) {
+            if (p.children && Array.isArray(p.children) && p.children.some(c => c.id === nodeId)) {
+                parentNode = p;
+                break;
+            }
+        }
+        if (parentNode) {
+            parentNode.includePrivate = true;
+            parentNode.childrenLoaded = false;
+            parentNode.loadedCount = 0;
+            requestChildren(parentNode.id, 0, TREE_PAGE_SIZE, true);
+            return;
+        }
+    }
+
+    node.expanded = !node.expanded;
+    if (node.expanded && !node.childrenLoaded) {
+      requestChildren(node.id);
+    } else {
+      renderTree();
+    }
+  }
+
+  function startInspectRoot() {
+    clearViewerError();
+    setHostVisibility('tree');
+    vscode.postMessage({ type: 'requestInspect', expression: currentExpression, mode: viewerMode, offset: 0, limit: TREE_PAGE_SIZE, includePrivate: includePrivateRoot });
+  }
+
+  function onInspectResult(msg) {
+    const inspect = msg.inspect;
+    currentInspect = inspect;
+    setInfoLabelFromInspect(inspect);
+
+    if (viewerMode === 'data' && inspect && inspect.is_ndarray) {
+      setHostVisibility('grid');
+      vscode.postMessage({ type: 'requestMeta', expression: currentExpression, mode: viewerMode });
+      return;
+    }
+
+    if (viewerMode === 'data' && inspect && inspect.is_editable_scalar) {
+      renderScalarEditor(inspect);
+      return;
+    }
+
+    if (viewerMode === 'data' && inspect && !inspect.is_container && !inspect.children?.length) {
+      renderReadOnlyScalar(inspect);
+      return;
+    }
+
+    createRootTree(inspect);
+    const rootNode = treeNodes.get(treeRootId);
+    if (rootNode) {
+      rootNode.canExpand = true;
+      rootNode.type = inspect.type;
+      rootNode.repr = inspect.scalar_value || '';
+      appendChildren(treeRootId, inspect);
+    }
+  }
+
+  function onChildrenResult(msg) {
+    if (!msg || !msg.nodeId || !msg.inspect) return;
+    appendChildren(msg.nodeId, msg.inspect);
+  }
+
+  function onScalarValueSet(msg) {
+    const info = scalarReqMap.get(msg.msgReqId);
+    scalarReqMap.delete(msg.msgReqId);
+    if (!info) return;
+    const input = document.getElementById('scalar-input');
+    input.classList.remove('ok', 'err');
+    if (msg.success) {
+      input.classList.add('ok');
+      setTimeout(() => input.classList.remove('ok'), 900);
+      if (viewerMode === 'data' && currentInspect && currentInspect.type === 'str') {
+        currentInspect.str_value = input.value;
+        currentInspect.total_count = input.value.length;
+        setInfoLabelFromInspect(currentInspect);
+      }
+      startInspectRoot();
+    } else {
+      input.classList.add('err');
+      setTimeout(() => input.classList.remove('err'), 1400);
+      setStatus(`Edit error: ${msg.error || 'unknown'}`);
+    }
+  }
+
+  function commitScalarValue() {
+    if (!currentExpression) return;
+    const input = document.getElementById('scalar-input');
+    const reqId = `scalar_${Date.now()}_${Math.random()}`;
+    scalarReqMap.set(reqId, { expression: currentExpression });
+    vscode.postMessage({ type: 'setScalarValue', expression: currentExpression, value: input.value, reqId, mode: viewerMode });
+  }
+
+  document.getElementById('mode-toggle').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-mode]');
+    if (!btn) return;
+    const nextMode = btn.dataset.mode === 'object' ? 'object' : 'data';
+    if (nextMode === viewerMode) return;
+    setMode(nextMode);
+    // Persist the new mode into the current history entry and clear stale cached
+    // content (tree/meta belong to a specific mode and must not be reused after switching).
+    if (historyIdx >= 0 && historyIdx < history.length) {
+      history[historyIdx].mode = viewerMode;
+      history[historyIdx].treeNodes = null;
+      history[historyIdx].treeRootId = null;
+      history[historyIdx].meta = null;
+      history[historyIdx].inspect = null;
+    }
+    startInspectRoot();
+  });
+
+  document.getElementById('scalar-input').addEventListener('input', (e) => {
+    const input = e.target;
+    if (input.readOnly) return;
+    if (input.value !== input.dataset.initialValue) {
+      input.classList.add('changed');
+    } else {
+      input.classList.remove('changed');
+    }
+  });
+
+  document.getElementById('scalar-input').addEventListener('keydown', (e) => {
+    const input = e.target;
+    if (input.readOnly) return;
+    const isString = input.classList.contains('scalar-string');
+
+    if (e.key === 'Enter') {
+      if (isString && !e.shiftKey) {
+        // Let standard Enter insert a newline for strings
+        return;
+      }
+      // For strings: Shift+Enter updates. For others: both Enter and Shift+Enter update.
+      e.preventDefault();
+      commitScalarValue();
+    }
+
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      startInspectRoot();
+    }
+  });
+
+  // ── Load expression ──────────────────────────────────────────────────────
+  function doLoadExpression(expr, initialR0, initialC0) {
+    currentExpression = expr || '';
+    meta = null;
+    is1D = false;
+    scrollingActive = false;
+    clearVisibleRangeTimer();
+    colorMin = null; colorMax = null;
+    chunkCache.clear(); pendingChunks.clear();
+    currentBufferKeys = new Set();
+    bufferTileR0 = 0; bufferTileC0 = 0;
+    viewR0 = initialR0 || 0;
+    viewC0 = initialC0 || 0;
+    document.getElementById('data-rows').innerHTML = '';
+    document.getElementById('col-idx-row').innerHTML = '';
+    document.getElementById('phantom').style.width = '0';
+    document.getElementById('phantom').style.height = '0';
+    document.getElementById('info-label').textContent = '—';
+    resetTreeState();
+    clearViewerError();
+    setRangeInfo(null, null);
+    updateAddrBar();
+    startInspectRoot();
+  }
+
+  function loadExpression(expr, initialR0, initialC0) {
+      if (navigatingHistory) {
+          doLoadExpression(expr, initialR0, initialC0);
+      } else {
+          navigateToExpression(expr);
+      }
+  }
+
+  function setViewerError(message) {
+    const err = document.getElementById('viewer-error');
+    const host = document.getElementById('scroll-host');
+    const treeHost = document.getElementById('tree-host');
+    const scalarHost = document.getElementById('scalar-host');
+    err.textContent = message;
+    err.style.display = 'block';
+    host.style.display = 'none';
+    treeHost.style.display = 'none';
+    scalarHost.style.display = 'none';
+  }
+
+  function clearViewerError() {
+    const err = document.getElementById('viewer-error');
+    const host = document.getElementById('scroll-host');
+    err.textContent = '';
+    err.style.display = 'none';
+    host.style.display = 'block';
+  }
+
+  function scrollTo(r0, c0) {
+    const host = document.getElementById('scroll-host');
+    host.scrollTop = r0 * ROW_H;
+    host.scrollLeft = IDX_COL_W + c0 * COL_W;
+    viewR0 = Math.max(0, r0); viewC0 = Math.max(0, c0);
+    computeVisible(); render();
+  }
+
+  // ── Message handler ──────────────────────────────────────────────────────
+  window.addEventListener('message', (event) => {
+    const msg = event.data;
+    switch (msg.type) {
+      case 'loadExpression':
+        setMode(msg.mode === 'object' ? 'object' : 'data');
+        rememberRecentExpression(msg.expression);
+        navigateToExpression(msg.expression, false);
+        updateRecentExpressionsDropdown();
+        break;
+      case 'inspectResult':
+        onInspectResult(msg);
+        break;
+      case 'inspectError':
+        setViewerError(`Cannot evaluate "${currentExpression}".`);
+        setStatus(`Error: cannot evaluate "${currentExpression}"`);
+        break;
+      case 'childrenResult':
+        onChildrenResult(msg);
+        break;
+      case 'childrenError':
+        setStatus('Unable to load child items.');
+        break;
+      case 'meta':       onMeta(msg); break;
+      case 'metaError':
+        setViewerError(`Cannot evaluate "${msg.expression}" as array data.`);
+        setStatus(`Error: cannot evaluate "${msg.expression}" as array data.`);
+        break;
+      case 'chunkData':  onChunkData(msg); break;
+      case 'chunkError':
+        pendingChunks.delete(msg.chunkId);
+        chunkCache.set(msg.chunkId, null);
+        queueVisibleColorRangeFromData();
+        setStatus('Chunk load error');
+        break;
+      case 'valueSet':   onValueSet(msg); break;
+      case 'scalarValueSet': onScalarValueSet(msg); break;
+    }
+  });
+
+  function onMeta(msg) {
+    clearViewerError();
+    setHostVisibility('grid');
+
+    if (msg.ndim === 0) {
+      meta = null;
+      is1D = false;
+      document.getElementById('info-label').textContent = `scalar  ${msg.dtype}`;
+      document.getElementById('slice-btns').innerHTML = '';
+      setRangeInfo(null, null);
+      setViewerError('Array Viewer does not support NumPy scalars (0-D). Please select an array with at least one dimension.');
+      setStatus('Unsupported: NumPy scalar (0-D).');
+      return;
+    }
+
+    dimIndices = []; // always empty; slice indices live in the expression itself
+
+    if (msg.ndim > 2) {
+      // Auto-convert base expression to sliced form: e.g. A  ->  A[(0),(0),:,:]
+      // Save the full shape so we can clamp the up/down buttons later.
+      baseShape = msg.shape;
+      const indices = new Array(msg.ndim - 2).fill(0);
+      const slicedExpr = buildSlicedExpression(currentExpression, indices);
+      addrInput.value = slicedExpr;
+      navigateToExpression(slicedExpr, true);
+      return;
+    }
+
+    meta = { shape: msg.shape, dtype: msg.dtype, ndim: msg.ndim };
+    is1D = msg.ndim === 1;
+    document.getElementById('info-label').textContent = `${msg.shape.join(' \u00d7 ')}  ${msg.dtype}`;
+
+    updateSliceButtons();
+    buildGrid();
+  }
+
+  function nRows() { return is1D ? (meta.shape[0] || 0) : (meta.shape[meta.shape.length - 2] || 0); }
+  function nCols() { return is1D ? 1 : (meta.shape[meta.shape.length - 1] || 0); }
+
+  function buildGrid() {
+    const host = document.getElementById('scroll-host');
+    const phantom = document.getElementById('phantom');
+    phantom.style.width  = (IDX_COL_W + nCols() * COL_W) + 'px';
+    phantom.style.height = (IDX_ROW_H + nRows() * ROW_H) + 'px';
+    host.scrollTop  = viewR0 * ROW_H;
+    host.scrollLeft = is1D ? 0 : IDX_COL_W + viewC0 * COL_W;
+    computeVisible();
+    render();
+  }
+
+  function computeVisible() {
+    const host = document.getElementById('scroll-host');
+    visRows = Math.ceil(host.clientHeight / ROW_H) + 2;
+    visCols = is1D ? 1 : Math.ceil(Math.max(1, host.clientWidth - IDX_COL_W) / COL_W) + 2;
+  }
+
+  // ── Scroll ───────────────────────────────────────────────────────────────
+  document.getElementById('scroll-host').addEventListener('keydown', (e) => {
+    if (!meta) return;
+    const maxRow = Math.max(0, nRows() - 1);
+    const maxCol = Math.max(0, nCols() - 1);
+    const pageRows = Math.max(1, visRows - 1);
+    const pageCols = Math.max(1, visCols - 1);
+    let dr = 0, dc = 0;
+    if      (e.key === 'ArrowDown')  dr = 1;
+    else if (e.key === 'ArrowUp')    dr = -1;
+    else if (e.key === 'ArrowRight') dc = 1;
+    else if (e.key === 'ArrowLeft')  dc = -1;
+    else if (e.key === 'PageDown')   dr = pageRows;
+    else if (e.key === 'PageUp')     dr = -pageRows;
+    else return;
+    e.preventDefault();
+    const newR = Math.max(0, Math.min(maxRow, viewR0 + dr));
+    const newC = Math.max(0, Math.min(maxCol, viewC0 + dc));
+    if (newR !== viewR0 || newC !== viewC0) scrollTo(newR, newC);
+  });
+
+  document.getElementById('scroll-host').addEventListener('scroll', () => {
+    if (syncingScroll || scrollRafPending) return;
+    scrollRafPending = true;
+    requestAnimationFrame(() => {
+      scrollRafPending = false;
+      onScroll();
+    });
+  }, { passive: true });
+
+  function onScroll() {
+    const host = document.getElementById('scroll-host');
+    if (!meta) return;
+    const maxRow = Math.max(0, nRows() - 1);
+    const maxCol = Math.max(0, nCols() - 1);
+    let newR0 = Math.max(0, Math.min(maxRow, Math.round(host.scrollTop / ROW_H)));
+    // If scroll moved but rounding landed on the same row, move one row in scroll direction
+    if (newR0 === viewR0 && host.scrollTop !== viewR0 * ROW_H) {
+      newR0 = host.scrollTop > viewR0 * ROW_H
+        ? Math.min(maxRow, viewR0 + 1)
+        : Math.max(0, viewR0 - 1);
+    }
+    const rawC = is1D ? 0 : (host.scrollLeft - IDX_COL_W) / COL_W;
+    let newC0 = is1D ? 0 : Math.max(0, Math.min(maxCol, Math.round(rawC)));
+    // If scroll moved but rounding landed on the same column, move one column in scroll direction
+    if (!is1D && newC0 === viewC0 && host.scrollLeft !== IDX_COL_W + viewC0 * COL_W) {
+      newC0 = host.scrollLeft > IDX_COL_W + viewC0 * COL_W
+        ? Math.min(maxCol, viewC0 + 1)
+        : Math.max(0, viewC0 - 1);
+    }
+
+    const snappedTop = newR0 * ROW_H;
+    const snappedLeft = is1D ? 0 : IDX_COL_W + newC0 * COL_W;
+    if (Math.abs(host.scrollTop - snappedTop) > 0.5 || (!is1D && Math.abs(host.scrollLeft - snappedLeft) > 0.5)) {
+      syncingScroll = true;
+      host.scrollTop = snappedTop;
+      if (!is1D) host.scrollLeft = snappedLeft;
+      syncingScroll = false;
+    }
+
+    if (newR0 !== viewR0 || newC0 !== viewC0) {
+      viewR0 = newR0; viewC0 = Math.max(0, newC0);
+      computeVisible(); render();
+      queueVisibleColorRangeFromScroll();
+    }
+    if (document.activeElement !== document.getElementById('addr-input')) {
+      updateAddrBar();
+    }
+  }
+
+  function updateAddrBar() {
+    if (!meta) { document.getElementById('addr-input').value = currentExpression || ''; return; }
+    document.getElementById('addr-input').value = currentExpression || '';
+  }
+
+  // ── Address bar ──────────────────────────────────────────────────────────
+  const addrInput = document.getElementById('addr-input');
+  const exprHistoryBtn = document.getElementById('expr-history-btn');
+  const exprHistoryMenu = document.getElementById('expr-history-menu');
+
+  addrInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter')     { e.preventDefault(); commitAddr(false); addrInput.blur(); }
+    if (e.key === 'Escape')    { updateAddrBar(); addrInput.blur(); }
+    if (e.key === 'ArrowUp')   { e.preventDefault(); historyBack(); }
+    if (e.key === 'ArrowDown') { e.preventDefault(); historyForward(); }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.altKey && e.key === 'ArrowLeft')  { e.preventDefault(); historyBack(); }
+    if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); historyForward(); }
+    if (e.key === 'Escape' && document.activeElement !== addrInput) {
+      // Blur whatever is focused so no button gets an orange focus ring.
+      if (document.activeElement && document.activeElement !== document.body) {
+        document.activeElement.blur();
+      }
+      // Undo the most recent private-items expansion, innermost first.
+      // 1. Check for any child node with includePrivate active.
+      let privateChildNode = null;
+      for (const n of treeNodes.values()) {
+        if (n.includePrivate) { privateChildNode = n; }
+      }
+      if (privateChildNode) {
+        privateChildNode.includePrivate = false;
+        privateChildNode.childrenLoaded = false;
+        privateChildNode.loadedCount = 0;
+        requestChildren(privateChildNode.id, 0, TREE_PAGE_SIZE, false);
+        return;
+      }
+      // 2. Root-level private.
+      if (includePrivateRoot) {
+        includePrivateRoot = false;
+        if (historyIdx >= 0 && historyIdx < history.length) {
+          history[historyIdx].includePrivateRoot = false;
+          history[historyIdx].treeNodes = null;
+          history[historyIdx].treeRootId = null;
+        }
+        startInspectRoot();
+      }
+    }
+  });
+
+  addrInput.addEventListener('blur', () => { updateAddrBar(); });
+
+  exprHistoryBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (!document.getElementById('expr-input-wrap').classList.contains('has-history')) return;
+    exprHistoryMenu.classList.toggle('open');
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#expr-input-wrap')) closeRecentExpressionsMenu();
+  });
+
+  function historyBack() {
+    if (historyIdx <= 0) return;
+    updateCurrentHistoryState();
+    historyIdx--;
+    restoreHistoryEntry(historyIdx);
+  }
+
+  function historyForward() {
+    if (historyIdx < 0 || historyIdx >= history.length - 1) return;
+    updateCurrentHistoryState();
+    historyIdx++;
+    restoreHistoryEntry(historyIdx);
+  }
+
+  document.getElementById('btn-back').addEventListener('click', () => { historyBack(); });
+  document.getElementById('btn-forward').addEventListener('click', () => { historyForward(); });
+  document.getElementById('btn-reload').addEventListener('click', () => { commitAddr(true); });
+
+  // ── Slice up/down buttons ────────────────────────────────────────────────
+  document.getElementById('slice-btns').addEventListener('click', (e) => {
+    const btn = e.target.closest('.slice-btn');
+    if (!btn || !meta) return;
+    const dimI = parseInt(btn.dataset.dim);
+    const delta = parseInt(btn.dataset.dir);
+    const expr = addrInput.value.trim();
+    const suffixStart = findSliceSuffixStart(expr);
+    if (suffixStart < 0) return;
+    const base = expr.slice(0, suffixStart);
+    const sliceContent = expr.slice(suffixStart + 1, -1);
+    let count = 0;
+    const newSliceContent = sliceContent.replace(/\((\d+)\)/g, (match, numStr) => {
+      if (count === dimI) {
+        count++;
+        let newVal = Math.max(0, parseInt(numStr) + delta);
+        if (baseShape && dimI < baseShape.length) newVal = Math.min(baseShape[dimI] - 1, newVal);
+        return `(${newVal})`;
+      }
+      count++;
+      return match;
+    });
+    const newExpr = `${base}[${newSliceContent}]`;
+    if (newExpr === currentExpression) return;
+    addrInput.value = newExpr;
+    // We update the expression in the current history node instead of pushing a new node for every slice change
+    navigateToExpression(newExpr, true, viewR0, viewC0);
+  });
+
+  function commitAddr(forceReload) {
+    baseShape = null; // clear stale shape on any user-initiated load
+    let txt = addrInput.value.trim();
+    if (!txt) {
+      if (forceReload) doLoadExpression('', 0, 0);
+      else navigateToExpression('', false);
+      return;
+    }
+
+    // Parse: expr[r0:r1, c0:c1]  or  expr[r0:r1]  or  bare expr
+    const sliceMatch = txt.match(/^(.*?)\[(\d+):(\d+)(?:,\s*(\d+):(\d+))?\]\s*$/);
+    let newExpr, r0, c0;
+
+    if (sliceMatch) {
+      newExpr = sliceMatch[1].trim() || currentExpression;
+      r0 = parseInt(sliceMatch[2]);
+      c0 = sliceMatch[4] !== undefined ? parseInt(sliceMatch[4]) : 0;
+    } else {
+      newExpr = txt; r0 = 0; c0 = 0;
+    }
+    if (!newExpr) return;
+
+    rememberRecentExpression(newExpr);
+
+    if (forceReload) {
+      doLoadExpression(newExpr, r0, c0);
+    } else if (newExpr !== currentExpression) {
+      navigateToExpression(newExpr, false, r0, c0);
+    } else {
+      scrollTo(r0, c0);
+    }
+
+    updateRecentExpressionsDropdown();
+  }
+
+  // ── Color buttons ────────────────────────────────────────────────────────
+  document.getElementById('color-btns').addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    colorMode = btn.dataset.mode;
+    document.querySelectorAll('#color-btns button').forEach(b => b.classList.toggle('active', b === btn));
+    recolorAll();
+  });
+
+  function recolorAll() {
+    document.querySelectorAll('.data-cell[data-v]').forEach(cell => {
+      const v = parseFloat(cell.dataset.v);
+      const bg = valueToColor(v);
+      cell.style.background = bg || '';
+      cell.style.color = bg && needsDarkText(bg) ? '#111' : '';
+      cell.style.fontWeight = isVisibleExtremeValue(v) ? '700' : '';
+    });
+  }
+
+  // ── Color range (visible viewport) ──────────────────────────────────────
+  function setRangeInfo(minVal, maxVal) {
+    const el = document.getElementById('range-info');
+    if (minVal === null || maxVal === null) {
+      el.textContent = 'Visible min: - max: -';
+      return;
+    }
+    const fmt = (v) => formatNumber(Number(v));
+    el.textContent = `Visible min: ${fmt(minVal)} max: ${fmt(maxVal)}`;
+  }
+
+  function clearVisibleRangeTimer() {
+    if (visibleRangeTimer !== null) {
+      clearTimeout(visibleRangeTimer);
+      visibleRangeTimer = null;
+    }
+  }
+
+  function getStrictViewportBounds() {
+    const host = document.getElementById('scroll-host');
+    const r0 = Math.max(0, viewR0);
+    const c0 = is1D ? 0 : Math.max(0, viewC0);
+    const dataViewportHeight = Math.max(0, host.clientHeight - IDX_ROW_H);
+    const visibleRows = Math.max(1, Math.ceil(dataViewportHeight / ROW_H));
+    const visibleCols = is1D
+      ? 1
+      : Math.max(1, Math.ceil(Math.max(0, host.clientWidth - IDX_COL_W) / COL_W));
+    const r1 = Math.min(nRows(), r0 + visibleRows);
+    const c1 = is1D ? 1 : Math.min(nCols(), c0 + visibleCols);
+    return { r0, r1, c0, c1 };
+  }
+
+  function isVisibleExtremeValue(v) {
+    return typeof v === 'number'
+      && isFinite(v)
+      && colorMin !== null
+      && colorMax !== null
+      && (v === colorMin || v === colorMax);
+  }
+
+  function computeVisibleColorRange() {
+    if (!meta) return { min: null, max: null };
+    const { r0, r1, c0, c1 } = getStrictViewportBounds();
+    let min = Infinity;
+    let max = -Infinity;
+
+    for (let r = r0; r < r1; r++) {
+      for (let c = c0; c < c1; c++) {
+        const v = getCachedValue(r, c);
+        if (typeof v !== 'number' || !isFinite(v)) continue;
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+    }
+
+    if (!isFinite(min) || !isFinite(max)) return { min: null, max: null };
+    return { min, max };
+  }
+
+  function applyVisibleColorRange() {
+    const range = computeVisibleColorRange();
+    if (range.min === colorMin && range.max === colorMax) return;
+    colorMin = range.min;
+    colorMax = range.max;
+    setRangeInfo(colorMin, colorMax);
+    recolorAll();
+  }
+
+  function scheduleVisibleColorRangeUpdate(delayMs, markScrollSettled) {
+    clearVisibleRangeTimer();
+    visibleRangeTimer = setTimeout(() => {
+      visibleRangeTimer = null;
+      if (markScrollSettled) scrollingActive = false;
+      applyVisibleColorRange();
+    }, delayMs);
+  }
+
+  function queueVisibleColorRangeFromScroll() {
+    scrollingActive = true;
+    scheduleVisibleColorRangeUpdate(SCROLL_SETTLE_MS, true);
+  }
+
+  function queueVisibleColorRangeFromData() {
+    if (scrollingActive) {
+      scheduleVisibleColorRangeUpdate(SCROLL_SETTLE_MS, true);
+      return;
+    }
+    scheduleVisibleColorRangeUpdate(CHUNK_RANGE_UPDATE_MS, false);
+  }
+
+  // ── Rendering ────────────────────────────────────────────────────────────
+  let renderPending = false;
+  function render() {
+    if (renderPending) return;
+    renderPending = true;
+    requestAnimationFrame(() => { renderPending = false; _render(); });
+  }
+
+  function _render() {
+    if (!meta) return;
+    updateBufferWindow();
+    const r0 = Math.max(0, viewR0);
+    const c0 = is1D ? 0 : Math.max(0, viewC0);
+    const r1 = Math.min(nRows(), r0 + visRows);
+    const c1 = is1D ? 1 : Math.min(nCols(), c0 + visCols);
+
+    const colIdxRow = document.getElementById('col-idx-row');
+    colIdxRow.innerHTML = '';
+    const corner = document.createElement('div');
+    corner.className = 'corner-cell';
+    colIdxRow.appendChild(corner);
+    for (let c = c0; c < c1; c++) {
+      const d = document.createElement('div');
+      d.className = 'col-idx-cell';
+      d.textContent = is1D ? 'value' : c;
+      colIdxRow.appendChild(d);
+    }
+
+    const dataRows = document.getElementById('data-rows');
+    dataRows.innerHTML = '';
+    for (let r = r0; r < r1; r++) {
+      const row = document.createElement('div');
+      row.className = 'data-row';
+      const ri = document.createElement('div');
+      ri.className = 'row-idx-cell'; ri.textContent = r;
+      row.appendChild(ri);
+      for (let c = c0; c < c1; c++) {
+        const cell = document.createElement('div');
+        cell.className = 'data-cell';
+        cell.dataset.r = r; cell.dataset.c = c;
+        const val = getCachedValue(r, c);
+        if (val === undefined) {
+          cell.textContent = '';
+          cell.classList.add('loading');
+        } else if (val === null) {
+          cell.textContent = 'err';
+        } else {
+          setCellValue(cell, val);
+        }
+        cell.addEventListener('dblclick', () => startEdit(cell, r, c));
+        row.appendChild(cell);
+      }
+      dataRows.appendChild(row);
+    }
+    updateAddrBar();
+    if (!scrollingActive) {
+      scheduleVisibleColorRangeUpdate(0, false);
+    }
+  }
+
+  function setCellValue(cell, val) {
+    cell.classList.remove('loading');
+    if (typeof val === 'string') {
+      cell.textContent = val; cell.dataset.v = '';
+      cell.style.background = '';
+      cell.style.color = '';
+      cell.style.fontWeight = '';
+    } else {
+      const s = formatNumber(val);
+      cell.textContent = s; cell.dataset.v = val;
+      const bg = valueToColor(val);
+      cell.style.background = bg || '';
+      cell.style.color = bg && needsDarkText(bg) ? '#111' : '';
+      cell.style.fontWeight = isVisibleExtremeValue(val) ? '700' : '';
+    }
+  }
+
+  // ── Chunk management ─────────────────────────────────────────────────────
+  function maxTileStart(totalCells, tileSize) {
+    const totalTiles = Math.ceil(totalCells / tileSize);
+    return Math.max(0, totalTiles - BUFFER_TILE_SPAN);
+  }
+
+  function updateBufferWindow() {
+    if (!meta) return;
+    const centerTileR = Math.floor(viewR0 / TILE_ROWS);
+    const centerTileC = is1D ? 0 : Math.floor(viewC0 / TILE_COLS);
+    const nextR0 = Math.max(0, Math.min(maxTileStart(nRows(), TILE_ROWS), centerTileR - 1));
+    const nextC0 = is1D ? 0 : Math.max(0, Math.min(maxTileStart(nCols(), TILE_COLS), centerTileC - 1));
+
+    if (nextR0 === bufferTileR0 && nextC0 === bufferTileC0) {
+      ensureBufferTiles();
+      return;
+    }
+    bufferTileR0 = nextR0;
+    bufferTileC0 = nextC0;
+    ensureBufferTiles();
+  }
+
+  function chunkKeyFromTile(tileR, tileC) {
+    return `${dimIndices.join(',')}_${tileR}_${tileC}`;
+  }
+
+  function chunkKey(r, c) {
+    return chunkKeyFromTile(Math.floor(r / TILE_ROWS), Math.floor(c / TILE_COLS));
+  }
+
+  function ensureBufferTiles() {
+    const keep = new Set();
+    const maxTileR = Math.ceil(nRows() / TILE_ROWS);
+    const maxTileC = is1D ? 1 : Math.ceil(nCols() / TILE_COLS);
+
+    for (let tr = bufferTileR0; tr < Math.min(maxTileR, bufferTileR0 + BUFFER_TILE_SPAN); tr++) {
+      for (let tc = bufferTileC0; tc < Math.min(maxTileC, bufferTileC0 + BUFFER_TILE_SPAN); tc++) {
+        const key = chunkKeyFromTile(tr, tc);
+        keep.add(key);
+        requestChunkForTile(tr, tc, key);
+      }
+    }
+
+    currentBufferKeys = keep;
+
+    Array.from(chunkCache.keys()).forEach((key) => {
+      if (!keep.has(key)) chunkCache.delete(key);
+    });
+    Array.from(pendingChunks).forEach((key) => {
+      if (!keep.has(key)) pendingChunks.delete(key);
+    });
+
+    queueVisibleColorRangeFromData();
+  }
+
+  function isKeyInCurrentBuffer(key) {
+    const dimPrefix = `${dimIndices.join(',')}_`;
+    if (!key.startsWith(dimPrefix)) return false;
+    const parts = key.slice(dimPrefix.length).split('_');
+    if (parts.length !== 2) return false;
+    const tileR = Number(parts[0]);
+    const tileC = Number(parts[1]);
+    if (!Number.isInteger(tileR) || !Number.isInteger(tileC)) return false;
+    return tileR >= bufferTileR0
+      && tileR < bufferTileR0 + BUFFER_TILE_SPAN
+      && tileC >= bufferTileC0
+      && tileC < bufferTileC0 + BUFFER_TILE_SPAN;
+  }
+
+  function getCachedValue(r, c) {
+    const chunk = chunkCache.get(chunkKey(r, c));
+    if (chunk === undefined) return undefined;
+    if (chunk === null) return null;
+    const lr = r - Math.floor(r / TILE_ROWS) * TILE_ROWS;
+    const lc = c - Math.floor(c / TILE_COLS) * TILE_COLS;
+    return is1D ? (chunk[lr] !== undefined ? chunk[lr][0] : undefined)
+                : (chunk[lr] !== undefined ? chunk[lr][lc] : undefined);
+  }
+
+  function requestChunkForTile(tileR, tileC, key) {
+    if (chunkCache.has(key) || pendingChunks.has(key)) return;
+    pendingChunks.add(key);
+    const r0 = tileR * TILE_ROWS;
+    const r1 = Math.min(nRows(), r0 + TILE_ROWS);
+    const c0 = tileC * TILE_COLS;
+    const c1 = Math.min(nCols(), c0 + TILE_COLS);
+    if (is1D) {
+      vscode.postMessage({ type: 'request1DChunk', r0, r1, chunkId: key, expression: currentExpression });
+    } else {
+      vscode.postMessage({ type: 'requestChunk', r0, r1, c0, c1, dimIndices, chunkId: key, expression: currentExpression });
+    }
+  }
+
+  function onChunkData(msg) {
+    pendingChunks.delete(msg.chunkId);
+    if (!isKeyInCurrentBuffer(msg.chunkId)) return;
+    chunkCache.set(msg.chunkId, is1D ? msg.data.map(v => [v]) : msg.data);
+    document.querySelectorAll('.data-cell.loading').forEach(cell => {
+      const val = getCachedValue(+cell.dataset.r, +cell.dataset.c);
+      if (val !== undefined) setCellValue(cell, val);
+    });
+    queueVisibleColorRangeFromData();
+  }
+
+  // ── Inline editing ───────────────────────────────────────────────────────
+  const editReqMap = new Map();
+
+  function startEdit(cell, r, c) {
+    if (cell.classList.contains('editing')) return;
+    const oldText = cell.textContent;
+    cell.classList.add('editing'); cell.innerHTML = '';
+    const inp = document.createElement('input');
+    inp.type = 'text'; inp.value = oldText;
+    cell.appendChild(inp); inp.focus(); inp.select();
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter')  { e.preventDefault(); commitEdit(cell, inp, r, c, oldText); }
+      if (e.key === 'Escape') { cancelEdit(cell, oldText); }
+    });
+    inp.addEventListener('blur', () => { if (cell.classList.contains('editing')) commitEdit(cell, inp, r, c, oldText); });
+  }
+
+  function commitEdit(cell, inp, r, c, oldText) {
+    const rawVal = inp.value.trim();
+    cell.classList.remove('editing'); cell.innerHTML = '';
+    const numVal = parseFloat(rawVal);
+    const sendVal = isNaN(numVal) ? rawVal : numVal;
+    const indices = is1D ? [...dimIndices, r] : [...dimIndices, r, c];
+    const reqId = `edit_${Date.now()}_${Math.random()}`;
+    cell.textContent = rawVal; cell.dataset.v = sendVal;
+    vscode.postMessage({ type: 'setValue', indices, value: sendVal, reqId, expression: currentExpression });
+    editReqMap.set(reqId, { cell, r, c, oldText });
+  }
+
+  function cancelEdit(cell, oldText) {
+    cell.classList.remove('editing'); cell.innerHTML = ''; cell.textContent = oldText;
+  }
+
+  function onValueSet(msg) {
+    const info = editReqMap.get(msg.msgReqId);
+    editReqMap.delete(msg.msgReqId);
+    if (!info) return;
+    const { cell, r, c, oldText } = info;
+    if (!msg.success) {
+      cell.textContent = oldText;
+      cell.classList.add('edit-err');
+      setTimeout(() => cell.classList.remove('edit-err'), 1500);
+      setStatus(`Edit error: ${msg.error || 'unknown'}`);
+    } else {
+      cell.classList.add('edit-ok');
+      setTimeout(() => cell.classList.remove('edit-ok'), 800);
+      const chunk = chunkCache.get(chunkKey(r, c));
+      if (chunk) {
+        const lr = r - Math.floor(r/TILE_ROWS)*TILE_ROWS;
+        const lc = c - Math.floor(c/TILE_COLS)*TILE_COLS;
+        const nv = parseFloat(cell.dataset.v);
+        if (!isNaN(nv)) { if (is1D) chunk[lr] = [nv]; else chunk[lr][lc] = nv; }
+      }
+      queueVisibleColorRangeFromData();
+    }
+  }
+
+  // ── Status ───────────────────────────────────────────────────────────────
+  let statusTimer;
+  function setStatus(msg) {
+    const statusEl = document.getElementById('status');
+    if (!statusEl) return;
+    statusEl.textContent = msg;
+    clearTimeout(statusTimer);
+    statusTimer = setTimeout(() => {
+      const el = document.getElementById('status');
+      if (el) el.textContent = '';
+    }, 3500);
+  }
+
+  // ── Resize ───────────────────────────────────────────────────────────────
+  new ResizeObserver(() => { computeVisible(); render(); }).observe(document.getElementById('scroll-host'));
+
+  // Signal ready so the extension sends the initial expression
+  refreshColorSwatches();
+  updateRecentExpressionsDropdown();
+  vscode.postMessage({ type: 'ready' });
+
+})();
+</script>
+</body>
+</html>
+

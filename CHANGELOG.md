@@ -2,12 +2,20 @@
 
 All notable changes to the **Pylot** extension will be documented in this file.
 
-## [1.10.0] - 2026-04-12
+## [1.10.0] - 2026-04-13
+
+### New Features
+- **Data Browser – Grid view**: The Array Viewer has been renamed and expanded into the **Data Browser**. The grid view supports arrays, tensors, matrices, and data frames with virtualized buffered scrolling, allowing large datasets to be explored without loading everything into memory at once.
+- **Data Browser – Object/tree view**: A new object browser mode displays dictionaries, lists, class instances, and arbitrary Python objects as an interactive tree. Accessible via the `obj` link in the hover tooltip or the `Pylot: Open Object Browser` command.
+- **Data Browser – Expression field**: An expression field in the browser accepts slicing notation and arbitrary Python expressions (e.g. `matrix[:, ::-1]`, `matrix.T`, `df["column"]`). The entered expression is kept in the address field and drives a re-evaluation on the Python side.
+- **Data Browser – Expression history**: A history dropdown on the expression field lets you navigate and re-select recently used expressions without retyping.
+- **Data Browser – Inline cell editing**: Numeric and text values can be edited directly inside the grid and written back to the underlying Python variable.
+- **Data Browser – Color mapping**: Color mapping modes (`None`, `Sym`, `Range`) visually encode cell values as a heat map. `Range` is the default.
+- **Data Browser – Multi-dimensional slicing**: For arrays with more than 2 dimensions, the expression field is auto-expanded with index suffix notation (e.g. `A[(0),(0),:,:]`). Up/down controls on the right side of the expression field step through the extra-dimension indices inline.
+- **Show Global Variables**: New command `Pylot: Show Global Variables` opens the object browser populated with the entire global variable namespace of the current Python session — a quick overview of all variables in memory.
 
 ### Improvements
-- **Array viewer history dropdown**: Added recent-expression history dropdown
-- **Array viewer header layout refresh**: Reorganized the top UI into two lines. The first line is now dedicated to expression editing (with reload, history dropdown, and inline extra-dimension slice controls kept around the expression field).
-- **Icon-only color mode buttons**: Color mode controls now show symbols only (`◯`, `⦶`, `⊘`) while preserving tooltips for discoverability.
+- **Data browser history dropdown**: Added recent-expression history dropdown list
 
 ## [1.9.2] - 2026-04-10
 

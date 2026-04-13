@@ -14,7 +14,7 @@ Run Python code directly from the editor with smart selection and visual line ma
 - **Cell execution** – `Shift+Enter` at a cell comment, which starts with `#%`, executes the entire cell until the next cell comment or the end of the file.
 - **Variable inspection** – Hover over any variable to see its type and current value in a tooltip, even while the code is running. It also shows the length of sized objects and the shape of NumPy arrays.
 - **Expression evaluation** – Pressing `Ctrl+Shift+Space` evaluates any selected expression or variable at the cursor and shows the result in a tooltip.
-- **Array viewer** – Open arrays/matrices in a interactive grid panel with buffered scrolling, an expression field (supports slices and arbitrary expressions like `matrix.T`), inline value editing, and color mapping modes.
+- **Data browser** – Inspect any Python variable in a dedicated panel: a grid view for arrays, matrices, and data frames with buffered scrolling, color mapping, and inline editing; a tree view for objects, dicts, and lists. Accepts arbitrary Python expressions and slice notation in the expression field.
 - **Variable Overlay** – See variable values and expression results by inlay hints directly in the editor, as ghost text right after the line.
 - **For-Loop Progress Bars** – Automatically shows progress bars for long-running `for` loops directly in the editor: `[■■■■■■■■‑‑‑‑‑‑‑‑‑‑‑‑‑] 32%, i=4`.
 - **Live Watches** – Add `#?` at the end of an assignment or expression line to show live inlay updates for that line while it executes.
@@ -43,16 +43,25 @@ Run Python code directly from the editor with smart selection and visual line ma
 | Interrupt Execution | Interrupt running code (sends KeyboardInterrupt) | `Ctrl+Alt+C` |
 | Toggle Inlay Hints | Enable or disable live variable overlays | – |
 | Clear Inlay Hints | Remove all current variable hints from the editor | – |
+| Open Data Browser | Open the data browser for the selected expression | – |
+| Open Object Browser | Open the object browser for the selected expression | – |
+| Show Global Variables | Open the object browser to show all global variables | – |
 
-### Open the Array Viewer
+### Open the Data Browser
+
+The data browser offers dedicated views for exploring your data variables: a grid view for arrays, tensors, matrices, and data frames, and a tree view for dictionaries, lists, and objects.
 
 1. Hover a variable or expression to open the tooltip.
-2. Click the array-viewer link in the tooltip.
-3. In the viewer, use the expression field to enter any valid Python expression (for example, `matrix-10`, `matrix[:, ::-1]`, or `matrix.T`).
+2. Click the `Show data` or `obj` link in the tooltip.
+3. In the viewer, use the expression field to enter any valid Python expression (for example, `matrix-10`, `matrix[:, ::-1]`, `matrix.T`, or `data["keys"]`).
 
 <br>
 <div align="left">
-<img src="array_viewer.png" alt="Array viewer screen shot" width="450" />
+<img src="resources/data_browser.png" alt="Data browser array view" width="450" />
+</div>
+<br>
+<div align="left">
+<img src="array_view.png" alt="Array viewer screen shot" width="450" />
 </div>
 
 ## When to use Pylot

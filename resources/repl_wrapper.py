@@ -403,6 +403,293 @@ persistent_globals = {
 input_queue = queue.Queue()
 input_reply_queue = queue.Queue()
 
+MAX_INSPECT_REPR_LEN = 120
+
+def _short_repr(value, max_len=MAX_INSPECT_REPR_LEN):
+    try:
+        if isinstance(value, (bool, int, float, complex, str)):
+            text = repr(value)
+        elif callable(value) or type(value).__name__ in ('method_wrapper', 'builtin_function_or_method', 'method', 'function'):
+            doc = getattr(value, '__doc__', None)
+            if doc and isinstance(doc, str) and doc.strip():
+                text = doc.strip().split('\n')[0]
+            else:
+                text = ""
+            if isinstance(value, type) and not text:
+                text = f"class {getattr(value, '__module__', '')}.{getattr(value, '__name__', '')}"
+        elif hasattr(value, '__name__') and hasattr(value, '__module__'):
+            text = f"<{type(value).__name__} {value.__module__}.{value.__name__}>"
+        else:
+            text = repr(value)
+            if text.startswith('<') and ' at 0x' in text:
+                text = re.sub(r' at 0x[0-9A-Fa-f]+', '', text)
+    except Exception:
+        text = f"<{type(value).__name__}>"
+
+    if not text:
+        return ""
+
+    text = text.replace('\n', ' ')
+    if len(text) > max_len:
+        text = text[:max_len - 3] + '...'
+    return text
+
+def _is_sized(value):
+    # strings/bytes are sized but we don't want to expand them as containers in data mode
+    if isinstance(value, (str, bytes, bytearray)):
+        return False
+    try:
+        len(value)
+        return True
+    except Exception:
+        return False
+
+def _is_editable_scalar(value):
+    return isinstance(value, (bool, int, float, str, bytes, bytearray))
+
+def _build_accessor_for_key(key):
+    return '[' + repr(key) + ']'
+
+def _inspect_children_data(value, offset, limit):
+    total = 0
+    children = []
+
+    if isinstance(value, dict):
+        items = list(value.items())
+        total = len(items)
+        for key, child in items[offset:offset + limit]:
+            children.append({
+                'key': _short_repr(key, 80),
+                'accessor': _build_accessor_for_key(key),
+                'type': type(child).__name__,
+                'repr': _short_repr(child),
+                'is_expandable': True,
+                'is_sized': _is_sized(child),
+            })
+        return total, children
+
+    if isinstance(value, (list, tuple)):
+        total = len(value)
+        for idx in range(offset, min(total, offset + limit)):
+            child = value[idx]
+            children.append({
+                'key': str(idx),
+                'accessor': f'[{idx}]',
+                'type': type(child).__name__,
+                'repr': _short_repr(child),
+                'is_expandable': True,
+                'is_sized': _is_sized(child),
+            })
+        return total, children
+
+    if isinstance(value, (set, frozenset)):
+        seq = list(value)
+        total = len(seq)
+        for idx in range(offset, min(total, offset + limit)):
+            child = seq[idx]
+            children.append({
+                'key': str(idx),
+                'accessor': None,
+                'type': type(child).__name__,
+                'repr': _short_repr(child),
+                'is_expandable': True,
+                'is_sized': _is_sized(child),
+            })
+        return total, children
+
+    # Fallback: not a data-container
+    return 0, []
+
+def _inspect_children_object(value, offset, limit, include_private=False):
+    try:
+        names = list(dict.fromkeys(dir(value)))
+    except Exception:
+        names = []
+
+    public = [n for n in names if not n.startswith('_')]
+    private = [n for n in names if n.startswith('_')]
+    has_public = len(public) > 0
+    merged = public[:]
+    if has_public and private and not include_private:
+        merged.append('__PYLOT_PRIVATE_GROUP__')
+    else:
+        merged.extend(private)
+
+    total = len(merged)
+    children = []
+    for name in merged[offset:offset + limit]:
+        if name == '__PYLOT_PRIVATE_GROUP__':
+            children.append({
+                'key': '_ ...',
+                'accessor': None,
+                'type': 'group',
+                'repr': f'{len(private)} private attributes',
+                'is_expandable': True,
+                'is_sized': False,
+                'is_private_group': True,
+            })
+            continue
+        try:
+            child = getattr(value, name)
+            child_type = type(child).__name__
+            child_repr = _short_repr(child)
+            is_expandable = True # Every object can be expanded via dir() in object mode
+            is_sized = _is_sized(child)
+        except Exception as ex:
+            child_type = 'error'
+            child_repr = f'<error: {ex}>'
+            is_expandable = False
+            is_sized = False
+        children.append({
+            'key': name,
+            'accessor': f'.{name}' if re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', name) else None,
+            'type': child_type,
+            'repr': child_repr,
+            'is_expandable': is_expandable,
+            'is_sized': is_sized,
+        })
+    return total, children, has_public
+
+def inspect_value(expression, mode='data', offset=0, limit=100, include_private=False):
+    expr = (expression or '').strip()
+
+    if expr:
+        value = eval(expr, persistent_globals)
+    else:
+        value = persistent_globals
+
+    value_type = type(value).__name__
+    # Report the empty-expression (globals) view as 'globals' instead of 'dict'
+    if expr == '':
+        value_type = 'globals'
+    is_ndarray = value_type == 'ndarray' and hasattr(value, 'shape') and hasattr(value, 'dtype')
+    shape = str(value.shape) if is_ndarray else None
+    dtype = str(value.dtype) if is_ndarray else None
+    is_editable = _is_editable_scalar(value)
+    if isinstance(value, (bytes, bytearray)):
+        scalar_value = repr(value)
+    elif is_editable:
+        scalar_value = str(value)
+    else:
+        scalar_value = None
+
+    # Bug fix: don't show container length for non-container types like int
+    is_container = _is_sized(value)
+    # Ensure is_container is false for non-containers even if they have __len__ by some fluke
+    if not isinstance(value, (list, tuple, dict, set, frozenset, str, bytes, bytearray)) and not is_ndarray:
+        is_container = False
+
+    data_children = []
+    total_count = 0
+    has_public = False
+
+    if expr == '':
+        names = sorted(persistent_globals.keys())
+        public = [n for n in names if not n.startswith('_')]
+        private = [n for n in names if n.startswith('_')]
+
+        # If expression is empty (globals), we show children directly.
+        # But if user requested specifically, include_private applies.
+        merged = public[:]
+        if private and not include_private:
+            merged.append('__PYLOT_PRIVATE_GROUP__')
+        else:
+            merged.extend(private)
+
+        total_count = len(merged)
+        for name in merged[offset:offset + limit]:
+            if name == '__PYLOT_PRIVATE_GROUP__':
+                data_children.append({
+                    'key': '_ ... (private variables)',
+                    'accessor': None,
+                    'type': 'group',
+                    'repr': f'{len(private)} private variable' + ('s' if len(private) != 1 else ''),
+                    'is_expandable': True,
+                    'is_sized': False,
+                    'is_private_group': True,
+                })
+                continue
+            child = persistent_globals[name]
+            data_children.append({
+                'key': name,
+                'accessor': name,
+                'type': type(child).__name__,
+                'repr': _short_repr(child),
+                'is_expandable': True,
+                'is_sized': _is_sized(child),
+            })
+        has_public = len(public) > 0
+    elif mode == 'object':
+        total_count, data_children, has_public = _inspect_children_object(value, offset, limit, include_private)
+    else:
+        total_count, data_children = _inspect_children_data(value, offset, limit)
+
+    # For editable bytes/bytearray, report the byte length (children are not enumerated)
+    if is_editable and isinstance(value, (bytes, bytearray)):
+        total_count = len(value)
+
+    return {
+        'expression': expr,
+        'type': value_type,
+        'shape': shape,
+        'dtype': dtype,
+        'is_ndarray': is_ndarray,
+        'is_container': is_container,
+        'is_editable_scalar': is_editable,
+        'scalar_value': scalar_value,
+        'str_value': str(value),
+        'total_count': total_count,
+        'children': data_children,
+        'has_public': has_public,
+        'offset': offset,
+        'limit': limit,
+        'has_more': (offset + len(data_children)) < total_count,
+    }
+
+def set_scalar_value(expression, raw_value):
+    expr = (expression or '').strip()
+    if not expr:
+        raise ValueError('Expression is empty')
+
+    current = eval(expr, persistent_globals)
+    text = '' if raw_value is None else str(raw_value)
+
+    if isinstance(current, bool):
+        value = text.strip().lower()
+        if value in ('true', '1', 'yes', 'on'):
+            parsed = True
+        elif value in ('false', '0', 'no', 'off'):
+            parsed = False
+        else:
+            raise ValueError('Boolean value must be true/false')
+    elif isinstance(current, int) and not isinstance(current, bool):
+        parsed = int(text.strip())
+    elif isinstance(current, float):
+        parsed = float(text.strip())
+    elif isinstance(current, str):
+        stripped = text.strip()
+        try:
+            lit = ast.literal_eval(stripped)
+            parsed = str(lit)
+        except Exception:
+            parsed = text
+    elif isinstance(current, (bytes, bytearray)):
+        stripped = text.strip()
+        lit = ast.literal_eval(stripped)
+        if not isinstance(lit, (bytes, bytearray)):
+            raise ValueError("Value must be a bytes literal (e.g. b'...')")
+        parsed = bytearray(lit) if isinstance(current, bytearray) else bytes(lit)
+    else:
+        raise ValueError(f'Type {type(current).__name__} is not editable in data mode')
+
+    persistent_globals['__pylot_tmp_set_value__'] = parsed
+    try:
+        exec(f"{expr} = __pylot_tmp_set_value__", persistent_globals)
+    finally:
+        persistent_globals.pop('__pylot_tmp_set_value__', None)
+
+    return parsed
+
 def custom_input(prompt=""):
     send_msg('input_request', prompt=str(prompt))
     reply = input_reply_queue.get()
@@ -527,6 +814,41 @@ def read_stdin():
                             if req_id is not None:
                                 kwargs['requestId'] = req_id
                             send_msg('set_item_async', **kwargs)
+                        continue
+                    elif action == 'inspect_async':
+                        req_id = command.get('requestId')
+                        try:
+                            expression = command.get('expression', '')
+                            mode = command.get('mode', 'data')
+                            offset = int(command.get('offset', 0) or 0)
+                            limit = int(command.get('limit', 100) or 100)
+                            include_private = bool(command.get('includePrivate', False))
+                            payload = inspect_value(expression, mode, offset, limit, include_private)
+                            kwargs = dict(success=True, payload=json.dumps(payload))
+                            if req_id is not None:
+                                kwargs['requestId'] = req_id
+                            send_msg('inspect_async', **kwargs)
+                        except Exception as e:
+                            kwargs = dict(success=False, error=str(e))
+                            if req_id is not None:
+                                kwargs['requestId'] = req_id
+                            send_msg('inspect_async', **kwargs)
+                        continue
+                    elif action == 'set_value_async':
+                        req_id = command.get('requestId')
+                        try:
+                            expression = command.get('expression', '')
+                            raw_value = command.get('value', '')
+                            set_scalar_value(expression, raw_value)
+                            kwargs = dict(success=True)
+                            if req_id is not None:
+                                kwargs['requestId'] = req_id
+                            send_msg('set_value_async', **kwargs)
+                        except Exception as e:
+                            kwargs = dict(success=False, error=str(e))
+                            if req_id is not None:
+                                kwargs['requestId'] = req_id
+                            send_msg('set_value_async', **kwargs)
                         continue
                     elif action == 'interrupt':
                         try:

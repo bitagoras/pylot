@@ -62,6 +62,10 @@ let asyncExpressionResultCallback: AsyncExprCallback | null = null;
 const asyncExpressionCallbacks = new Map<string, AsyncExprCallback>();
 type SetItemCallback = (success: boolean, error?: string) => void;
 const setItemCallbacks = new Map<string, SetItemCallback>();
+type InspectCallback = (success: boolean, payloadText: string, error?: string) => void;
+const inspectCallbacks = new Map<string, InspectCallback>();
+type SetScalarCallback = (success: boolean, error?: string) => void;
+const setScalarCallbacks = new Map<string, SetScalarCallback>();
 let debugMode = false;
 let mcpDebugMode = false;
 let silentEvaluation = false;
@@ -614,7 +618,6 @@ export function activate(context: vscode.ExtensionContext) {
      * Matplotlib GUI events between commands.
      */
     const replWrapperPath = path.join(context.extensionPath, 'resources', 'repl_wrapper.py');
-    const replWrapperCode = fs.readFileSync(replWrapperPath, 'utf8').replace(/^\uFEFF/, '');
 
     /**
      * Spawn a new persistent Python REPL process.
@@ -698,7 +701,7 @@ export function activate(context: vscode.ExtensionContext) {
                 }
 
                 logDebug(`[startPython] Spawning REPL process with cwd: ${cwd}`);
-                const startupProcess = spawn(pythonPath, ['-u', '-c', replWrapperCode], {
+                const startupProcess = spawn(pythonPath, ['-u', replWrapperPath], {
                     env: env,
                     cwd: cwd
                 });
@@ -794,6 +797,24 @@ export function activate(context: vscode.ExtensionContext) {
                                         const cb = setItemCallbacks.get(msg.requestId ?? '');
                                         if (cb) {
                                             setItemCallbacks.delete(msg.requestId);
+                                            cb(msg.success, msg.error);
+                                        }
+                                        break;
+                                    }
+
+                                    case 'inspect_async': {
+                                        const cb = inspectCallbacks.get(msg.requestId ?? '');
+                                        if (cb) {
+                                            inspectCallbacks.delete(msg.requestId);
+                                            cb(msg.success, msg.payload || '', msg.error);
+                                        }
+                                        break;
+                                    }
+
+                                    case 'set_value_async': {
+                                        const cb = setScalarCallbacks.get(msg.requestId ?? '');
+                                        if (cb) {
+                                            setScalarCallbacks.delete(msg.requestId);
                                             cb(msg.success, msg.error);
                                         }
                                         break;
@@ -1871,12 +1892,10 @@ export function activate(context: vscode.ExtensionContext) {
                     : shape.replace(/[()]/g, '').replace(/,\s*$/, '').replace(/,\s*/g, ' \u00d7 ').trim();
                 typeLine += `, *\`shape\`*: ${formattedShape}`;
             }
-            // Add "Open in Array Viewer" link for arrays/matrices with at least 1 dimension
-            // Exclude 0-d arrays (shape == "()") and plain scalars (no shape)
-            const shapeHasDims = shape && shape !== '()' && /\d/.test(shape);
-            if (shapeHasDims && expression) {
-                const args = encodeURIComponent(JSON.stringify({ expression, shape }));
-                typeLine += `\u00a0\u00a0[Open in Array Viewer](command:pylot.openArrayViewer?${args})`;
+            if (expression) {
+                const dataArgs = encodeURIComponent(JSON.stringify({ expression, mode: 'data' }));
+                const objectArgs = encodeURIComponent(JSON.stringify({ expression, mode: 'object' }));
+                typeLine += `\u00a0\u00a0[Show data](command:pylot.openDataBrowser?${dataArgs}) / [obj](command:pylot.openDataBrowser?${objectArgs})`;
             }
             markdown.appendMarkdown(typeLine);
         }
@@ -2300,10 +2319,10 @@ export function activate(context: vscode.ExtensionContext) {
         return { success: true, output: 'Sent KeyboardInterrupt to REPL.' };
     });
 
-    // ── Array Viewer ──────────────────────────────────────────────────────────
+    // ── Data Browser ─────────────────────────────────────────────────────────
 
-    /** The single shared array viewer panel (only one at a time). */
-    let arrayViewerPanel: vscode.WebviewPanel | undefined;
+    /** The single shared data browser panel (only one at a time). */
+    let dataBrowserPanel: vscode.WebviewPanel | undefined;
 
     /** Generate a unique requestId for concurrent async eval calls. */
     let arrayViewerReqCounter = 0;
@@ -2339,24 +2358,66 @@ export function activate(context: vscode.ExtensionContext) {
             .replace(/\binf\b/gi, '"Infinity"');
     }
 
-    function createArrayViewerPanel(expression: string): void {
+    function inspectForViewer(expression: string, mode: 'data' | 'object', offset = 0, limit = 100, includePrivate = false): Promise<any | null> {
+        return new Promise((resolve) => {
+            if (!pythonRepl || !replReady || !pythonRepl.stdin) { resolve(null); return; }
+            const reqId = nextReqId();
+            inspectCallbacks.set(reqId, (success, payloadText) => {
+                if (!success) {
+                    resolve(null);
+                    return;
+                }
+                try {
+                    resolve(JSON.parse(payloadText));
+                } catch {
+                    resolve(null);
+                }
+            });
+            const cmd = { action: 'inspect_async', expression, mode, offset, limit, includePrivate, requestId: reqId };
+            pythonRepl.stdin.write(JSON.stringify(cmd) + '\n');
+            setTimeout(() => {
+                if (inspectCallbacks.has(reqId)) {
+                    inspectCallbacks.delete(reqId);
+                    resolve(null);
+                }
+            }, 15000);
+        });
+    }
+
+    function setScalarForViewer(expression: string, value: string): Promise<{ success: boolean; error?: string }> {
+        return new Promise((resolve) => {
+            if (!pythonRepl || !replReady || !pythonRepl.stdin) { resolve({ success: false, error: 'Python REPL not ready.' }); return; }
+            const reqId = nextReqId();
+            setScalarCallbacks.set(reqId, (success, error) => resolve({ success, error }));
+            const cmd = { action: 'set_value_async', expression, value, requestId: reqId };
+            pythonRepl.stdin.write(JSON.stringify(cmd) + '\n');
+            setTimeout(() => {
+                if (setScalarCallbacks.has(reqId)) {
+                    setScalarCallbacks.delete(reqId);
+                    resolve({ success: false, error: 'Timeout while setting scalar value.' });
+                }
+            }, 15000);
+        });
+    }
+
+    function createDataBrowserPanel(expression: string, initialMode: 'data' | 'object' = 'data'): void {
         // If a panel already exists, send it the new expression and reveal it
-        if (arrayViewerPanel) {
-            arrayViewerPanel.reveal(vscode.ViewColumn.Beside);
-            arrayViewerPanel.webview.postMessage({ type: 'loadExpression', expression });
+        if (dataBrowserPanel) {
+            dataBrowserPanel.reveal(vscode.ViewColumn.Beside);
+            dataBrowserPanel.webview.postMessage({ type: 'loadExpression', expression, mode: initialMode });
             return;
         }
 
-        const htmlPath = path.join(context.extensionPath, 'resources', 'array_viewer.html');
+        const htmlPath = path.join(context.extensionPath, 'resources', 'data_browser.html');
         if (!fs.existsSync(htmlPath)) {
-            vscode.window.showErrorMessage('Pylot: array_viewer.html not found in resources/');
+            vscode.window.showErrorMessage('Pylot: data_browser.html not found in resources/');
             return;
         }
         const htmlContent = fs.readFileSync(htmlPath, 'utf8');
 
         const panel = vscode.window.createWebviewPanel(
-            'pylotArrayViewer',
-            `Array Viewer`,
+            'pylotDataBrowser',
+            `Data Browser`,
             vscode.ViewColumn.Beside,
             {
                 enableScripts: true,
@@ -2365,25 +2426,78 @@ export function activate(context: vscode.ExtensionContext) {
             }
         );
 
-        arrayViewerPanel = panel;
-        panel.onDidDispose(() => { arrayViewerPanel = undefined; });
+        dataBrowserPanel = panel;
+        panel.onDidDispose(() => { dataBrowserPanel = undefined; });
 
         panel.webview.html = htmlContent;
 
         // Mutable expression — updated whenever the webview changes the active variable
         let currentExpression = expression;
+        let currentMode: 'data' | 'object' = initialMode;
 
         panel.webview.onDidReceiveMessage(async (msg: any) => {
             // Any message that carries an expression field updates the active variable
-            if (typeof msg.expression === 'string' && msg.expression) {
+            if (typeof msg.expression === 'string') {
                 currentExpression = msg.expression;
+            }
+            if (msg.mode === 'data' || msg.mode === 'object') {
+                currentMode = msg.mode;
             }
 
             switch (msg.type) {
                 case 'ready': {
-                    panel.webview.postMessage({ type: 'loadExpression', expression: currentExpression });
+                    panel.webview.postMessage({ type: 'loadExpression', expression: currentExpression, mode: currentMode });
                     break;
                 }
+
+                case 'requestInspect': {
+                    const { expression, mode, offset, limit, includePrivate, nodeId } = msg;
+                    if (!pythonRepl || !replReady) {
+                        panel.webview.postMessage({ type: 'inspectError', expression: currentExpression, nodeId, reason: 'replNotReady' });
+                        return;
+                    }
+                    const inspect = await inspectForViewer(
+                        typeof expression === 'string' ? expression : currentExpression,
+                        mode === 'object' ? 'object' : 'data',
+                        typeof offset === 'number' ? offset : 0,
+                        typeof limit === 'number' ? limit : 100,
+                        !!includePrivate
+                    );
+                    if (!inspect) {
+                        panel.webview.postMessage({ type: 'inspectError', expression: currentExpression, nodeId });
+                        return;
+                    }
+                    panel.webview.postMessage({ type: 'inspectResult', expression: currentExpression, mode: currentMode, inspect, nodeId });
+                    break;
+                }
+
+                case 'requestChildren': {
+                    const { expression, mode, offset, limit, includePrivate, nodeId } = msg;
+                    const inspect = await inspectForViewer(
+                        typeof expression === 'string' ? expression : currentExpression,
+                        mode === 'object' ? 'object' : 'data',
+                        typeof offset === 'number' ? offset : 0,
+                        typeof limit === 'number' ? limit : 100,
+                        !!includePrivate
+                    );
+                    if (!inspect) {
+                        panel.webview.postMessage({ type: 'childrenError', nodeId });
+                        return;
+                    }
+                    panel.webview.postMessage({ type: 'childrenResult', nodeId, inspect });
+                    break;
+                }
+
+                case 'setScalarValue': {
+                    const { expression, value, reqId } = msg;
+                    const response = await setScalarForViewer(
+                        typeof expression === 'string' ? expression : currentExpression,
+                        typeof value === 'string' ? value : String(value ?? '')
+                    );
+                    panel.webview.postMessage({ type: 'scalarValueSet', success: response.success, error: response.error, msgReqId: reqId });
+                    break;
+                }
+
                 case 'requestMeta': {
                     const reqId = nextReqId();
                     const code = `(lambda _x: __import__('json').dumps([list(_x.shape), str(_x.dtype), int(_x.ndim)]))((${currentExpression}))`;
@@ -2490,19 +2604,57 @@ export function activate(context: vscode.ExtensionContext) {
         });
     }
 
-    const openArrayViewerCommand = vscode.commands.registerCommand('pylot.openArrayViewer', (args: any) => {
-        let expression: string | undefined;
+    function getExpressionFromEditorOrArgs(args: any): string {
+        // Called from a hover link: args contains the expression
         if (typeof args === 'string') {
-            try { const parsed = JSON.parse(args); expression = parsed.expression; } catch { expression = args; }
-        } else if (args && typeof args === 'object') {
-            expression = args.expression;
+            try {
+                const parsed = JSON.parse(args);
+                if (parsed.expression !== undefined) { return String(parsed.expression); }
+            } catch { /* not JSON */ }
+            return args.trim();
         }
-        if (!expression) { return; }
-        createArrayViewerPanel(expression);
+        if (args && typeof args === 'object' && args.expression !== undefined) {
+            return String(args.expression);
+        }
+        // Called from the command palette: use selection or word at cursor
+        const editor = vscode.window.activeTextEditor;
+        if (editor) {
+            const sel = editor.selection;
+            if (!sel.isEmpty) {
+                return editor.document.getText(sel).trim();
+            }
+            const wordRange = editor.document.getWordRangeAtPosition(sel.active);
+            if (wordRange) {
+                return editor.document.getText(wordRange).trim();
+            }
+        }
+        return '';
+    }
+
+    const openDataBrowserCommand = vscode.commands.registerCommand('pylot.openDataBrowser', (args: any) => {
+        let mode: 'data' | 'object' = 'data';
+        if (typeof args === 'string') {
+            try { const p = JSON.parse(args); mode = p.mode === 'object' ? 'object' : 'data'; } catch { /* ignore */ }
+        } else if (args && typeof args === 'object') {
+            mode = args.mode === 'object' ? 'object' : 'data';
+        }
+        const expression = getExpressionFromEditorOrArgs(args);
+        createDataBrowserPanel(expression, mode);
+    });
+
+    const openObjectBrowserCommand = vscode.commands.registerCommand('pylot.openObjectBrowser', (args: any) => {
+        const expression = getExpressionFromEditorOrArgs(args);
+        createDataBrowserPanel(expression, 'object');
+    });
+
+    const showGlobalVariablesCommand = vscode.commands.registerCommand('pylot.showGlobalVariables', () => {
+        createDataBrowserPanel('', 'data');
     });
 
     context.subscriptions.push(hoverProvider);
-    context.subscriptions.push(openArrayViewerCommand);
+    context.subscriptions.push(openDataBrowserCommand);
+    context.subscriptions.push(openObjectBrowserCommand);
+    context.subscriptions.push(showGlobalVariablesCommand);
     context.subscriptions.push(executeCommand);
     context.subscriptions.push(executeNoMoveCommand);
     context.subscriptions.push(executeWholeCommand);
