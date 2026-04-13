@@ -57,7 +57,7 @@ The data browser offers dedicated views for exploring your data variables: a gri
 
 <br>
 <div align="left">
-<img src="resources/data_browser.png" alt="Data browser array view" width="450" />
+<img src="data_browser.png" alt="Data browser array view" width="450" />
 </div>
 <br>
 <div align="left">
