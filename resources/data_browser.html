@@ -941,14 +941,22 @@
         row.style.top = `${node.depth * ROW_H}px`;
       }
 
+      const isPrivateGroup = !!node.is_private_group;
+      const canExpand = !!node.canExpand && !isPrivateGroup;
+      const canToggleIndents = canExpand || isPrivateGroup;
+
       for (let i = 0; i < node.depth; i++) {
         const indent = document.createElement('span');
         indent.className = 'tree-indent';
+        if (canToggleIndents) {
+          indent.style.cursor = 'pointer';
+          indent.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleTreeNode(node.id);
+          });
+        }
         row.appendChild(indent);
       }
-
-      const isPrivateGroup = !!node.is_private_group;
-      const canExpand = !!node.canExpand && !isPrivateGroup;
       const exp = document.createElement('span');
       exp.className = `tree-expand${canExpand ? '' : ' placeholder'}`;
       if (node.expanded && !isPrivateGroup) exp.classList.add('expanded');
@@ -964,13 +972,14 @@
       const key = document.createElement('span');
       key.className = 'tree-key';
       key.textContent = String(node.key);
-      if (node.expression) {
+      if (node.expression && !isPrivateGroup) {
         key.title = node.expression;
       }
 
       // Make the entire row clickable instead of just the key
       if (isPrivateGroup) {
         row.style.cursor = 'pointer';
+        row.title = 'Click to show private attributes. Press Escape to hide.';
         row.addEventListener('click', (e) => {
           e.stopPropagation();
           toggleTreeNode(node.id);
