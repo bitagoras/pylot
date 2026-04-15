@@ -2,6 +2,14 @@
 
 All notable changes to the **Pylot** extension will be documented in this file.
 
+## [1.10.1] - 2026-04-15
+
+### New Features
+- **Data Browser keyboard shortcut**: Added `Shift+Ctrl+Alt+Space` keybinding for the `Pylot: Open Data Browser` command.
+
+### Bug Fixes
+- **Data Browser – Sticky scroll headers**: Fixed several issues with sticky headers in the tree/object view. Headers now correctly disappear when their scope ends, incoming headers at a shallower depth properly push out deeper stale headers, and the sticky state is computed from stable layout positions instead of CSS-affected offsets.
+
 ## [1.10.0] - 2026-04-13
 
 ### New Features

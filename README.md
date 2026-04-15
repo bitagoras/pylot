@@ -43,7 +43,7 @@ Run Python code directly from the editor with smart selection and visual line ma
 | Interrupt Execution | Interrupt running code (sends KeyboardInterrupt) | `Ctrl+Alt+C` |
 | Toggle Inlay Hints | Enable or disable live variable overlays | – |
 | Clear Inlay Hints | Remove all current variable hints from the editor | – |
-| Open Data Browser | Open the data browser for the selected expression | – |
+| Open Data Browser | Open the data browser for the selected expression | `Shift+Ctrl+Alt+Space` |
 | Open Object Browser | Open the object browser for the selected expression | – |
 | Show Global Variables | Open the object browser to show all global variables | – |
 

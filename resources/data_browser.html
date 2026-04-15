@@ -218,9 +218,12 @@
     border-bottom: 1px solid var(--border);
   }
   .tree-indent { width: 14px; flex-shrink: 0; }
+  .tree-indent:hover {
+    background: rgba(128, 128, 128, 0.2);
+  }
   .tree-expand {
-    width: 20px;
-    height: 20px;
+    width: 24px;
+    height: 24px;
     color: var(--btn-fg);
     display: inline-flex;
     align-items: center;
@@ -230,8 +233,11 @@
     line-height: 1;
     flex-shrink: 0;
     transition: transform 0.1s ease;
+    border-radius: 2px;
   }
-  .tree-expand.expanded { transform: rotate(90deg); }
+  .tree-expand:hover {
+    background: rgba(128, 128, 128, 0.4);
+  }
   .tree-expand.placeholder {
     visibility: hidden;
     pointer-events: none;
@@ -445,6 +451,8 @@
   const TREE_PAGE_SIZE = 100;
   let treeNodes = new Map();
   let treeRootId = null;
+  let stickyScopes = new WeakMap(); // sticky row element → scope-end row element
+  let stickyNaturalTops = new WeakMap(); // row element → natural top position in px
   let nodeCounter = 0;
   let includePrivateRoot = false;
 
@@ -914,26 +922,51 @@
 
       if (node.depth === -1) {
         if (node.expanded && Array.isArray(node.children)) {
+          if (node.loadedCount < node.totalCount) {
+            const loadMoreNode = { id: 'loadmore-' + node.id, depth: 0, isLoadMore: true, parentId: node.id };
+            stack.push(loadMoreNode);
+          }
           for (let i = node.children.length - 1; i >= 0; i--) {
             stack.push(node.children[i]);
-          }
-          if (node.loadedCount < node.totalCount) {
-            const loadMoreRow = document.createElement('div');
-            loadMoreRow.className = 'tree-row ' + (rowIndex % 2 === 0 ? 'even' : 'odd');
-            rowIndex++;
-            const loadMore = document.createElement('button');
-            loadMore.className = 'tree-load-more';
-            loadMore.textContent = `Load more (${node.loadedCount}/${node.totalCount})`;
-            loadMore.addEventListener('click', () => loadMoreChildren(node.id));
-            loadMoreRow.appendChild(loadMore);
-            host.appendChild(loadMoreRow);
           }
         }
         continue;
       }
 
+      if (node.isLoadMore) {
+        const loadMoreRow = document.createElement('div');
+        loadMoreRow.className = 'tree-row ' + (rowIndex % 2 === 0 ? 'even' : 'odd');
+        loadMoreRow.dataset.rowIndex = rowIndex;
+        loadMoreRow.dataset.depth = node.depth;
+        rowIndex++;
+        for (let i = 0; i < node.depth; i++) {
+          const indent = document.createElement('span');
+          indent.className = 'tree-indent';
+          loadMoreRow.appendChild(indent);
+        }
+        const exp = document.createElement('span');
+        exp.className = 'tree-expand placeholder';
+        loadMoreRow.appendChild(exp);
+        const key = document.createElement('span');
+        key.className = 'tree-key';
+        key.textContent = '... ';
+        loadMoreRow.appendChild(key);
+        const loadMoreText = document.createElement('span');
+        loadMoreText.style.color = 'var(--cell-fg)';
+        const parentNode = treeNodes.get(node.parentId);
+        loadMoreText.textContent = `Load more (${parentNode.loadedCount}/${parentNode.totalCount})`;
+        loadMoreRow.appendChild(loadMoreText);
+        loadMoreRow.style.cursor = 'pointer';
+        loadMoreRow.title = 'Click to load more items';
+        loadMoreRow.addEventListener('click', () => loadMoreChildren(node.parentId));
+        host.appendChild(loadMoreRow);
+        continue;
+      }
+
       const row = document.createElement('div');
       row.className = 'tree-row ' + (rowIndex % 2 === 0 ? 'even' : 'odd');
+      row.dataset.rowIndex = rowIndex;
+      row.dataset.depth = node.depth;
       rowIndex++;
 
       if (node.depth < 5 && node.expanded) {
@@ -960,7 +993,7 @@
       const exp = document.createElement('span');
       exp.className = `tree-expand${canExpand ? '' : ' placeholder'}`;
       if (node.expanded && !isPrivateGroup) exp.classList.add('expanded');
-      exp.innerHTML = '<svg width="20" height="20" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M10.072 8l-3.54 3.54-.706-.708L8.658 8 5.826 5.168l.706-.708L10.072 8z" style="transform: scale(1.3); transform-origin: center;"/></svg>';
+      exp.innerHTML = '<svg width="24" height="24" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M10.072 8l-3.54 3.54-.706-.708L8.658 8 5.826 5.168l.706-.708L10.072 8z" style="transform: scale(1.3); transform-origin: center;"/></svg>';
       if (canExpand) {
         exp.addEventListener('click', (e) => {
           e.stopPropagation();
@@ -1022,30 +1055,54 @@
       host.appendChild(row);
 
       if (node.expanded && Array.isArray(node.children)) {
+        if (node.loadedCount < node.totalCount) {
+          const loadMoreNode = { id: 'loadmore-' + node.id, depth: node.depth + 1, isLoadMore: true, parentId: node.id };
+          stack.push(loadMoreNode);
+        }
         for (let i = node.children.length - 1; i >= 0; i--) {
           stack.push(node.children[i]);
         }
-        if (node.loadedCount < node.totalCount) {
-          const loadMoreRow = document.createElement('div');
-          loadMoreRow.className = 'tree-row ' + (rowIndex % 2 === 0 ? 'even' : 'odd');
-          rowIndex++;
-          for(let i=0; i<=node.depth; i++) loadMoreRow.appendChild(document.createElement('span')).className='tree-indent';
-          const loadMore = document.createElement('button');
-          loadMore.className = 'tree-load-more';
-          loadMore.textContent = `Load more (${node.loadedCount}/${node.totalCount})`;
-          loadMore.addEventListener('click', () => loadMoreChildren(node.id));
-          loadMoreRow.appendChild(loadMore);
-          host.appendChild(loadMoreRow);
-        }
       }
+    }
+    // Record natural top positions for all rows (before CSS sticky interferes with offsetTop).
+    // Each row is ROW_H tall; sticky rows add a 1px border-bottom.
+    stickyNaturalTops = new WeakMap();
+    let cumulativeTop = 0;
+    const allRows = Array.from(host.querySelectorAll('.tree-row'));
+    for (const r of allRows) {
+      stickyNaturalTops.set(r, cumulativeTop);
+      cumulativeTop += ROW_H + (r.classList.contains('sticky') ? 1 : 0);
+    }
+
+    // Compute scope-end row for each sticky row.
+    // The scope of a sticky row at depth D ends just before the next row at depth <= D.
+    stickyScopes = new WeakMap();
+    const stickyStack = []; // stack of {depth, element}
+    for (let i = 0; i < allRows.length; i++) {
+      const r = allRows[i];
+      const d = parseInt(r.dataset.depth);
+      // Close any open sticky rows whose depth >= current row's depth
+      while (stickyStack.length && stickyStack[stickyStack.length - 1].depth >= d) {
+        const popped = stickyStack.pop();
+        stickyScopes.set(popped.element, i > 0 ? allRows[i - 1] : popped.element);
+      }
+      if (r.classList.contains('sticky')) {
+        stickyStack.push({ depth: d, element: r });
+      }
+    }
+    // Close remaining open sticky rows with the last row
+    const lastRow = allRows[allRows.length - 1];
+    while (stickyStack.length) {
+      const popped = stickyStack.pop();
+      stickyScopes.set(popped.element, lastRow);
     }
     // Re-evaluate sticky header visibility after each render (scroll position preserved)
     requestAnimationFrame(updateStickyHeaders);
   }
 
-  // When a higher-level (lower-depth) sticky row scrolls up and enters the sticky zone,
-  // deeper sticky rows that belong to the old ancestor chain should be hidden.
-  // We recompute which rows form the current active ancestor path on each scroll.
+  // Recompute which sticky rows form the current active ancestor path on each scroll.
+  // A sticky row is "stuck" when its natural position has scrolled above its sticky threshold,
+  // and its scope is still visible (its last descendant hasn't scrolled above the sticky zone).
   function updateStickyHeaders() {
     const host = document.getElementById('tree-host');
     if (!host) return;
@@ -1053,21 +1110,49 @@
     const stickyRows = host.querySelectorAll('.tree-row.sticky');
 
     // Walk rows in DOM order; maintain the active path by depth.
-    // When a stuck row at depth D is found, it replaces the path at D and clears deeper levels.
+    // Use pre-computed natural top positions (immune to CSS sticky offsetTop issues).
     const activePath = []; // activePath[depth] = the sticky row currently active at that depth
     for (const row of stickyRows) {
       const depth = Math.round(parseFloat(row.style.top) / ROW_H);
-      // A sticky row is "stuck" when its natural position has scrolled above its sticky threshold
-      if (row.offsetTop < scrollTop + depth * ROW_H) {
+      const naturalTop = stickyNaturalTops.get(row) ?? 0;
+      const stickySlotY = scrollTop + depth * ROW_H;
+      const isStuck = naturalTop < stickySlotY;
+      if (!isStuck) continue;
+      // Check if scope is still active: last descendant must still be visible in the viewport
+      const scopeEndRow = stickyScopes.get(row);
+      const scopeEndNatural = scopeEndRow ? (stickyNaturalTops.get(scopeEndRow) ?? 0) : Infinity;
+      const scopeBottomY = scopeEndRow ? (scopeEndNatural + ROW_H) : Infinity;
+      const scopeActive = scopeBottomY > scrollTop;
+      if (scopeActive) {
         activePath[depth] = row;
         activePath.length = depth + 1; // discard any previously active deeper rows
+      }
+    }
+
+    // Handle "incoming" headers: non-stuck sticky rows approaching the sticky zone.
+    // When an incoming row at depth D has scrolled into view above a deeper header's
+    // sticky slot, that deeper header belongs to a previous scope and must be hidden.
+    for (const row of stickyRows) {
+      const depth = Math.round(parseFloat(row.style.top) / ROW_H);
+      const naturalTop = stickyNaturalTops.get(row) ?? 0;
+      const stickySlotY = scrollTop + depth * ROW_H;
+      const isStuck = naturalTop < stickySlotY;
+      if (isStuck) continue;
+      // Visual position of this incoming row relative to the top of the scroll viewport
+      const visualTop = naturalTop - scrollTop;
+      // Hide any active headers at deeper slots that this incoming row has reached
+      for (let d = activePath.length - 1; d >= depth; d--) {
+        if (activePath[d] && d * ROW_H >= visualTop) {
+          activePath[d] = null;
+        }
       }
     }
 
     const activeSet = new Set(activePath.filter(Boolean));
     for (const row of stickyRows) {
       const depth = Math.round(parseFloat(row.style.top) / ROW_H);
-      const isStuck = row.offsetTop < scrollTop + depth * ROW_H;
+      const naturalTop = stickyNaturalTops.get(row) ?? 0;
+      const isStuck = naturalTop < scrollTop + depth * ROW_H;
       // Hide stuck rows that are not part of the current active ancestor chain
       row.style.visibility = (isStuck && !activeSet.has(row)) ? 'hidden' : '';
     }
