@@ -189,6 +189,47 @@
     white-space: normal;
   }
 
+  #function-host {
+    display: none;
+    padding: 16px;
+    flex-direction: column;
+    flex: 1;
+    overflow: auto;
+    background: var(--cell-bg);
+    line-height: 1.5;
+  }
+  #function-params {
+    font-family: monospace;
+    font-size: 14px;
+    color: #dcdcaa;
+    margin-bottom: 12px;
+    padding: 8px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    white-space: pre-wrap;
+  }
+  #function-doc {
+    font-family: sans-serif;
+    font-size: 13px;
+    color: var(--cell-fg);
+    padding: 8px 0;
+    background: transparent;
+    white-space: pre-wrap;
+  }
+  #function-doc pre {
+    background: rgba(128, 128, 128, 0.1);
+    padding: 8px;
+    border-radius: 4px;
+    overflow-x: auto;
+    margin: 8px 0;
+  }
+  #function-doc code {
+    font-family: monospace;
+    background: rgba(128, 128, 128, 0.1);
+    padding: 2px 4px;
+    border-radius: 3px;
+  }
 
   #tree-host,
   #scalar-host {
@@ -398,6 +439,11 @@
 <!-- Error area (shown for unsupported values like NumPy scalars) -->
 <div id="viewer-error"></div>
 
+<div id="function-host">
+  <div id="function-params"></div>
+  <div id="function-doc"></div>
+</div>
+
 <div id="tree-host"></div>
 
 <div id="scalar-host">
@@ -534,6 +580,8 @@
           entry.treeRootId = treeRootId;
           entry.inspect = currentInspect;
           entry.meta = meta;
+          entry.treeScrollTop = document.getElementById('tree-host').scrollTop;
+          entry.gridScrollTop = document.getElementById('scroll-host').scrollTop;
       }
   }
 
@@ -575,6 +623,7 @@
 
         if (entry.treeNodes && entry.treeRootId) {
               currentExpression = entry.expression;
+              addrInput.value = currentExpression;
               viewR0 = entry.r0 || 0; viewC0 = entry.c0 || 0;
               treeNodes = new Map(entry.treeNodes);
               treeRootId = entry.treeRootId;
@@ -589,18 +638,31 @@
               setHostVisibility('tree');
               setInfoLabelFromInspect(currentInspect);
               renderTree();
+              if (entry.treeScrollTop) {
+                  requestAnimationFrame(() => {
+                      document.getElementById('tree-host').scrollTop = entry.treeScrollTop;
+                  });
+              }
               } else if (entry.meta) {
               currentExpression = entry.expression;
+              addrInput.value = currentExpression;
               viewR0 = entry.r0 || 0; viewC0 = entry.c0 || 0;
               meta = entry.meta;
               setHostVisibility('grid');
               setRangeInfo(meta.shape, null);
+              if (entry.gridScrollTop) {
+                  requestAnimationFrame(() => {
+                      document.getElementById('scroll-host').scrollTop = entry.gridScrollTop;
+                  });
+              }
               vscode.postMessage({ type: 'requestMeta', expression: currentExpression, mode: viewerMode });
               } else if (entry.inspect && entry.inspect.is_editable_scalar) {
               currentExpression = entry.expression;
+              addrInput.value = currentExpression;
               renderScalarEditor(entry.inspect);
               setInfoLabelFromInspect(entry.inspect);
           } else {
+              addrInput.value = entry.expression;
               doLoadExpression(entry.expression, entry.r0, entry.c0);
           }
       } finally {
@@ -760,6 +822,7 @@
     const grid = document.getElementById('scroll-host');
     const tree = document.getElementById('tree-host');
     const scalar = document.getElementById('scalar-host');
+    const functionHost = document.getElementById('function-host');
     const colorBtns = document.getElementById('color-btns');
     const rangeInfo = document.getElementById('range-info');
     const sliceBtns = document.getElementById('slice-btns');
@@ -767,6 +830,7 @@
     grid.style.display = mode === 'grid' ? 'block' : 'none';
     tree.style.display = mode === 'tree' ? 'block' : 'none';
     scalar.style.display = mode === 'scalar' ? 'flex' : 'none';
+    functionHost.style.display = mode === 'function' ? 'flex' : 'none';
 
     const arrayControlsVisible = mode === 'grid';
     colorBtns.style.display = arrayControlsVisible ? 'inline-flex' : 'none';
@@ -793,6 +857,46 @@
       return accessor.startsWith('.') ? accessor.slice(1) : accessor;
     }
     return `${baseExpr}${accessor}`;
+  }
+
+  function renderMarkdown(mdText) {
+    if (!mdText) return '';
+    let html = mdText
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+    // basic code block
+    html = html.replace(/```[a-z]*\n([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+    // inline code
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    // bold
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    // italic
+    html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+
+    return html;
+  }
+
+  function renderFunctionView(inspect) {
+    const host = document.getElementById('function-host');
+    const paramEl = document.getElementById('function-params');
+    const docEl = document.getElementById('function-doc');
+
+    const funcName = currentExpression ? currentExpression.split('.').pop() : 'function';
+    paramEl.textContent = `def ${funcName}${inspect.func_params || '()'}:`;
+
+    if (inspect.func_doc_html) {
+      docEl.innerHTML = inspect.func_doc_html;
+      docEl.style.display = 'block';
+    } else if (inspect.func_doc) {
+      docEl.innerHTML = renderMarkdown(inspect.func_doc);
+      docEl.style.display = 'block';
+    } else {
+      docEl.innerHTML = '<em>No docstring available.</em>';
+    }
+
+    setHostVisibility('function');
   }
 
   function setInfoLabelFromInspect(inspect) {
@@ -840,7 +944,7 @@
     if (inspect.type === 'str') {
       input.classList.add('scalar-string');
       input.classList.remove('scalar-oneline');
-      helpEl.textContent = 'Shift+Enter to update, Enter for new line. Esc to cancel.';
+      helpEl.textContent = 'Enter to update, Shift+Enter for new line. Esc to cancel.';
     } else if (inspect.type === 'bytes' || inspect.type === 'bytearray') {
       input.classList.add('scalar-oneline');
       input.classList.remove('scalar-string');
@@ -883,12 +987,14 @@
             repr: c.repr,
             depth: 0,
             expanded: false,
-            canExpand: viewerMode === 'data' ? (!!c.is_sized && c.type !== 'ndarray' && c.type !== 'Tensor') : !!c.is_expandable,
+            canExpand: viewerMode === 'data' ? (!!c.is_sized && c.type !== 'Tensor' && (c.type !== 'ndarray' || (!!c.is_ndarray && !!c.shape && c.shape.split(',').length >= 2))) : !!c.is_expandable,
             childrenLoaded: false,
             children: [],
             loadedCount: 0,
             totalCount: 0,
-            is_private_group: !!c.is_private_group
+            is_private_group: !!c.is_private_group,
+            is_ndarray: !!c.is_ndarray,
+            shape: c.shape
         };
         treeNodes.set(cNode.id, cNode);
         return cNode;
@@ -1020,9 +1126,16 @@
       } else if (node.accessor || (node.depth === 0 && node.expression)) {
         row.style.cursor = 'pointer';
         row.addEventListener('click', () => {
-          addrInput.value = node.expression;
-          navigateToExpression(node.expression, false);
-          rememberRecentExpression(node.expression);
+          if (viewerMode === 'data' && node.type && (node.type.includes('array') || node.type.includes('ndarray'))) {
+             // If it's an array slice or array, try to show in grid if it's 2D
+             addrInput.value = node.expression;
+             navigateToExpression(node.expression, false);
+             rememberRecentExpression(node.expression);
+          } else {
+             addrInput.value = node.expression;
+             navigateToExpression(node.expression, false);
+             rememberRecentExpression(node.expression);
+          }
         });
       }
       row.appendChild(key);
@@ -1212,12 +1325,14 @@
         repr: child.repr,
         depth: node.depth + 1,
         expanded: false,
-        canExpand: viewerMode === 'data' ? (!!child.is_sized && child.type !== 'ndarray' && child.type !== 'Tensor') : !!child.is_expandable,
+        canExpand: viewerMode === 'data' ? (!!child.is_sized && child.type !== 'Tensor' && (child.type !== 'ndarray' || (!!child.is_ndarray && !!child.shape && child.shape.split(',').length >= 2))) : !!child.is_expandable,
         childrenLoaded: false,
         children: [],
         loadedCount: 0,
         totalCount: 0,
-        is_private_group: !!child.is_private_group
+        is_private_group: !!child.is_private_group,
+        is_ndarray: !!child.is_ndarray,
+        shape: child.shape
       };
       treeNodes.set(childNode.id, childNode);
       newChildren.push(childNode);
@@ -1296,6 +1411,11 @@
     if (viewerMode === 'data' && inspect && inspect.is_ndarray) {
       setHostVisibility('grid');
       vscode.postMessage({ type: 'requestMeta', expression: currentExpression, mode: viewerMode });
+      return;
+    }
+
+    if (viewerMode === 'data' && inspect && inspect.is_function) {
+      renderFunctionView(inspect);
       return;
     }
 
@@ -1388,11 +1508,11 @@
     const isString = input.classList.contains('scalar-string');
 
     if (e.key === 'Enter') {
-      if (isString && !e.shiftKey) {
-        // Let standard Enter insert a newline for strings
+      if (isString && e.shiftKey) {
+        // Shift+Enter inserts a newline for strings
         return;
       }
-      // For strings: Shift+Enter updates. For others: both Enter and Shift+Enter update.
+      // For strings: Enter updates. For others: both Enter and Shift+Enter update.
       e.preventDefault();
       commitScalarValue();
     }
@@ -1441,11 +1561,13 @@
     const host = document.getElementById('scroll-host');
     const treeHost = document.getElementById('tree-host');
     const scalarHost = document.getElementById('scalar-host');
+    const functionHost = document.getElementById('function-host');
     err.textContent = message;
     err.style.display = 'block';
     host.style.display = 'none';
     treeHost.style.display = 'none';
     scalarHost.style.display = 'none';
+    functionHost.style.display = 'none';
   }
 
   function clearViewerError() {
@@ -2124,7 +2246,8 @@
         const lr = r - Math.floor(r/TILE_ROWS)*TILE_ROWS;
         const lc = c - Math.floor(c/TILE_COLS)*TILE_COLS;
         const nv = parseFloat(cell.dataset.v);
-        if (!isNaN(nv)) { if (is1D) chunk[lr] = [nv]; else chunk[lr][lc] = nv; }
+        const cachedValue = isNaN(nv) ? cell.textContent : nv;
+        if (is1D) chunk[lr] = [cachedValue]; else chunk[lr][lc] = cachedValue;
       }
       queueVisibleColorRangeFromData();
     }

@@ -3,6 +3,9 @@ import threading
 import queue
 import builtins
 
+if '.' not in sys.path:
+    sys.path.insert(0, '.')
+
 io_lock = threading.Lock()
 real_stdout = sys.stdout
 
@@ -396,14 +399,48 @@ def _pylot_progress(iterable, line_number, filename, var_name="var"):
 persistent_globals = {
     '__name__': '__main__',
     '__doc__': None,
-    '_pylot_progress': _pylot_progress,
-    '_pylot_watch_names': _pylot_watch_names,
-    '_pylot_watch_expr': _pylot_watch_expr,
 }
 input_queue = queue.Queue()
 input_reply_queue = queue.Queue()
 
 MAX_INSPECT_REPR_LEN = 120
+
+def _json_safe_value(value):
+    try:
+        import numpy as np
+        if isinstance(value, np.ndarray):
+            return _json_safe_value(value.tolist())
+        if isinstance(value, np.generic):
+            return _json_safe_value(value.item())
+    except Exception:
+        pass
+
+    if isinstance(value, list):
+        return [_json_safe_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _json_safe_value(item) for key, item in value.items()}
+    if isinstance(value, bytes):
+        try:
+            return value.decode('utf-8')
+        except Exception:
+            return repr(value)
+    if isinstance(value, bytearray):
+        return _json_safe_value(bytes(value))
+    if isinstance(value, float):
+        if value != value:
+            return 'NaN'
+        if value == float('inf'):
+            return 'Infinity'
+        if value == float('-inf'):
+            return '-Infinity'
+    if isinstance(value, complex):
+        return repr(value)
+    return value
+
+def _pylot_dump_json_safe(value):
+    return json.dumps(_json_safe_value(value), ensure_ascii=False)
 
 def _short_repr(value, max_len=MAX_INSPECT_REPR_LEN):
     try:
@@ -465,6 +502,8 @@ def _inspect_children_data(value, offset, limit):
                 'repr': _short_repr(child),
                 'is_expandable': True,
                 'is_sized': _is_sized(child),
+                'is_ndarray': (type(child).__name__ == 'ndarray' and hasattr(child, 'shape')),
+                'shape': str(child.shape) if hasattr(child, 'shape') and type(child).__name__ == 'ndarray' else None,
             })
         return total, children
 
@@ -479,8 +518,44 @@ def _inspect_children_data(value, offset, limit):
                 'repr': _short_repr(child),
                 'is_expandable': True,
                 'is_sized': _is_sized(child),
+                'is_ndarray': (type(child).__name__ == 'ndarray' and hasattr(child, 'shape')),
+                'shape': str(child.shape) if hasattr(child, 'shape') and type(child).__name__ == 'ndarray' else None,
             })
         return total, children
+
+    try:
+        import numpy as np
+        if isinstance(value, np.ndarray) and value.ndim >= 1:
+            total = value.shape[0]
+            for idx in range(offset, min(total, offset + limit)):
+                child = value[idx]
+                if value.ndim == 1:
+                    # Leaf element: show type and value
+                    children.append({
+                        'key': str(idx),
+                        'accessor': f'[{idx}]',
+                        'type': str(value.dtype),
+                        'repr': str(child),
+                        'is_expandable': False,
+                        'is_sized': False,
+                        'is_ndarray': False,
+                        'shape': None,
+                    })
+                else:
+                    # Sub-array slice along axis 0
+                    children.append({
+                        'key': f'[{idx}]',
+                        'accessor': f'[{idx}]',
+                        'type': 'ndarray',
+                        'repr': f'{child.dtype}  {list(child.shape)}',
+                        'is_expandable': True,
+                        'is_sized': True,
+                        'is_ndarray': True,
+                        'shape': str(child.shape),
+                    })
+            return total, children
+    except Exception:
+        pass
 
     if isinstance(value, (set, frozenset)):
         seq = list(value)
@@ -566,18 +641,51 @@ def inspect_value(expression, mode='data', offset=0, limit=100, include_private=
     shape = str(value.shape) if is_ndarray else None
     dtype = str(value.dtype) if is_ndarray else None
     is_editable = _is_editable_scalar(value)
-    if isinstance(value, (bytes, bytearray)):
-        scalar_value = repr(value)
-    elif is_editable:
-        scalar_value = str(value)
-    else:
-        scalar_value = None
+
+    # For numpy scalars or 0-d arrays, we want them to be editable/viewable as scalars
+    _is_np_scalar = False
+    try:
+        import numpy as np
+        if isinstance(value, (np.generic, np.ndarray)) and (not hasattr(value, 'shape') or value.shape == ()):
+            is_editable = True
+            _is_np_scalar = True
+            if isinstance(value, np.bytes_):
+                # Use plain bytes repr so the editor shows b'...' instead of np.bytes_(b'...')
+                scalar_value = repr(bytes(value))
+            else:
+                scalar_value = str(value)
+    except Exception:
+        pass
+
+    if not _is_np_scalar:
+        if isinstance(value, (bytes, bytearray)):
+            scalar_value = repr(value)
+        elif is_editable:
+            scalar_value = str(value)
+        else:
+            scalar_value = None
 
     # Bug fix: don't show container length for non-container types like int
     is_container = _is_sized(value)
     # Ensure is_container is false for non-containers even if they have __len__ by some fluke
     if not isinstance(value, (list, tuple, dict, set, frozenset, str, bytes, bytearray)) and not is_ndarray:
         is_container = False
+
+    is_function = False
+    func_params = None
+    func_doc = None
+    if not is_container and not is_ndarray and not isinstance(value, type) and callable(value):
+        is_function = True
+        import inspect as py_inspect
+        try:
+            func_doc = py_inspect.getdoc(value)
+        except Exception:
+            pass
+        try:
+            sig = py_inspect.signature(value)
+            func_params = str(sig)
+        except Exception:
+            pass
 
     data_children = []
     total_count = 0
@@ -617,6 +725,8 @@ def inspect_value(expression, mode='data', offset=0, limit=100, include_private=
                 'repr': _short_repr(child),
                 'is_expandable': True,
                 'is_sized': _is_sized(child),
+                'is_ndarray': (type(child).__name__ == 'ndarray' and hasattr(child, 'shape')),
+                'shape': str(child.shape) if hasattr(child, 'shape') and type(child).__name__ == 'ndarray' else None,
             })
         has_public = len(public) > 0
     elif mode == 'object':
@@ -636,6 +746,9 @@ def inspect_value(expression, mode='data', offset=0, limit=100, include_private=
         'is_ndarray': is_ndarray,
         'is_container': is_container,
         'is_editable_scalar': is_editable,
+        'is_function': is_function,
+        'func_params': func_params,
+        'func_doc': func_doc,
         'scalar_value': scalar_value,
         'str_value': str(value),
         'total_count': total_count,
@@ -675,6 +788,10 @@ def set_scalar_value(expression, raw_value):
             parsed = text
     elif isinstance(current, (bytes, bytearray)):
         stripped = text.strip()
+        # Accept np.bytes_(b'...') as well as plain b'...'
+        m = re.match(r'^np\.bytes_\((b["\'].*["\'])\)$', stripped, re.DOTALL)
+        if m:
+            stripped = m.group(1)
         lit = ast.literal_eval(stripped)
         if not isinstance(lit, (bytes, bytearray)):
             raise ValueError("Value must be a bytes literal (e.g. b'...')")
@@ -698,6 +815,10 @@ def custom_input(prompt=""):
     return reply
 
 builtins.input = custom_input
+builtins._pylot_progress = _pylot_progress
+builtins._pylot_watch_names = _pylot_watch_names
+builtins._pylot_watch_expr = _pylot_watch_expr
+builtins._pylot_dump_json_safe = _pylot_dump_json_safe
 
 mpl_mode = os.environ.get('PYLOT_MPL_MODE', 'auto')
 

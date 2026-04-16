@@ -2467,6 +2467,15 @@ export function activate(context: vscode.ExtensionContext) {
                         panel.webview.postMessage({ type: 'inspectError', expression: currentExpression, nodeId });
                         return;
                     }
+                    if (inspect.is_function && inspect.func_doc) {
+                        try {
+                            // VS Code's builtin markdown renderer
+                            const renderedStr = await vscode.commands.executeCommand<string>('markdown.api.render', inspect.func_doc);
+                            inspect.func_doc_html = typeof renderedStr === 'string' ? renderedStr : null;
+                        } catch (e) {
+                            inspect.func_doc_html = null;
+                        }
+                    }
                     panel.webview.postMessage({ type: 'inspectResult', expression: currentExpression, mode: currentMode, inspect, nodeId });
                     break;
                 }
@@ -2520,15 +2529,15 @@ export function activate(context: vscode.ExtensionContext) {
                     const reqId = nextReqId();
                     const extraDims = (dimIndices as number[]).map(i => String(i)).join(',');
                     const sliceExpr = extraDims
-                        ? `(${currentExpression})[${extraDims},${r0}:${r1},${c0}:${c1}].tolist()`
-                        : `(${currentExpression})[${r0}:${r1},${c0}:${c1}].tolist()`;
+                        ? `__import__('builtins')._pylot_dump_json_safe((${currentExpression})[${extraDims},${r0}:${r1},${c0}:${c1}])`
+                        : `__import__('builtins')._pylot_dump_json_safe((${currentExpression})[${r0}:${r1},${c0}:${c1}])`;
                     const raw = await evalForViewer(sliceExpr, reqId);
                     if (raw === null) {
                         panel.webview.postMessage({ type: 'chunkError', chunkId });
                         return;
                     }
                     try {
-                        const data = JSON.parse(sanitiseForJson(raw));
+                        const data = JSON.parse(raw);
                         panel.webview.postMessage({ type: 'chunkData', chunkId, data, r0, c0 });
                     } catch {
                         panel.webview.postMessage({ type: 'chunkError', chunkId });
@@ -2539,14 +2548,14 @@ export function activate(context: vscode.ExtensionContext) {
                 case 'request1DChunk': {
                     const { r0, r1, chunkId } = msg;
                     const reqId = nextReqId();
-                    const sliceExpr = `(${currentExpression})[${r0}:${r1}].tolist()`;
+                    const sliceExpr = `__import__('builtins')._pylot_dump_json_safe((${currentExpression})[${r0}:${r1}])`;
                     const raw = await evalForViewer(sliceExpr, reqId);
                     if (raw === null) {
                         panel.webview.postMessage({ type: 'chunkError', chunkId });
                         return;
                     }
                     try {
-                        const data = JSON.parse(sanitiseForJson(raw));
+                        const data = JSON.parse(raw);
                         panel.webview.postMessage({ type: 'chunkData', chunkId, data, r0, c0: 0 });
                     } catch {
                         panel.webview.postMessage({ type: 'chunkError', chunkId });

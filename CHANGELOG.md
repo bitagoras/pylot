@@ -2,6 +2,19 @@
 
 All notable changes to the **Pylot** extension will be documented in this file.
 
+## [1.11.0] - 2026-04-16
+
+### New Features
+- **Data Browser – NumPy array tree nodes**: NumPy arrays in the tree view now show an expand toggle. Expanding a 2D array lists its row slices; expanding a 3D+ array lists axis-0 slices, each of which can be expanded further. Clicking a slice navigates to it in the grid view.
+- **Data Browser – 1D array leaf nodes**: Expanding a 1D NumPy array in the tree view shows individual elements with their exact dtype (e.g. `float32`, `int64`) and value.
+- **Data Browser – Function view**: Functions are now displayed in a dedicated view within the data browser (data mode) with their signature and docstring. The docstring is rendered using VS Code's builtin markdown renderer for consistent styling and syntax highlighting.
+- **Data Browser keyboard shortcut**: Changed to `Ctrl+Shift+Space` keybinding for the `Pylot: Open Data Browser`; `Shift+Tab` is now used for `Pylot: Evaluate Python Expression`
+
+### Bug Fixes
+- **Data Browser – NumPy array expand symbol missing**: Arrays with `ndim >= 2` inside dicts, lists, or the globals view were not showing the expand toggle because `is_ndarray` and `shape` metadata were not forwarded from the backend for nested children. Both are now included in all child descriptors.
+- **Data Browser – NumPy bytes scalar display**: NumPy `|S…` (bytes string) scalars were shown in the scalar editor as `np.bytes_(b'apple')`, which could not be re-entered. The editor now displays the plain `b'apple'` form.
+- **Data Browser – NumPy bytes scalar input**: Parsing of `np.bytes_(b'...')` in the scalar editor now works as a fallback; the wrapper is stripped before `ast.literal_eval` is called.
+
 ## [1.10.1] - 2026-04-15
 
 ### New Features
