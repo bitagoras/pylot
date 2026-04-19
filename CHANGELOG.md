@@ -2,6 +2,20 @@
 
 All notable changes to the **Pylot** extension will be documented in this file.
 
+## [1.12.0] - 2026-04-19
+
+### New Features
+- **Data Browser – Bool toggle switch**: Viewing a standalone `bool` scalar in data mode now shows a toggle switch instead of a plain text field.
+- **Data Browser – Datetime calendar picker (array cells)**: Double-clicking a cell in a `datetime64` array now opens a polished calendar picker instead of a raw text input. The picker shows a monthly day grid with previous/next month navigation, a month dropdown and year input in the header, and an HH:MM:SS time row (hidden automatically for day-resolution arrays such as `datetime64[D]`). An ISO text field at the bottom stays in sync and accepts direct typing. Press **Enter** or click **OK** to commit; **Escape** or clicking outside cancels. The column width is automatically widened to 150 px so formatted dates fit without truncation.
+- **Data Browser – Datetime calendar picker (scalar values)**: When inspecting a standalone `datetime.datetime`, `datetime.date`, or NumPy `datetime64` scalar in the scalar editor, the same calendar picker appears inline below the ISO text field. Clicking a day or adjusting the time spinners updates the text field live; editing the text field directly moves the calendar to the matching date. Committing with **Enter** writes the ISO value back to the Python variable.
+
+### Improvements
+- **Data Browser – Editable scalar types expanded**: The scalar editor in data mode now supports editing `datetime.datetime`, `datetime.date`, `datetime.time`, and `datetime.timedelta` values. Datetime types are displayed and parsed in ISO format (e.g. `2023-01-15T14:30:00`); `timedelta` is shown and accepted as total seconds.
+- **Data Browser – NumPy scalar editability**: NumPy scalar types that cannot reliably round-trip from a user-entered string (e.g. `timedelta64`, `void`, `object`) are now rendered as read-only instead of showing a misleading editable field.
+- **Data Browser – Edit format hints**: The help text below the scalar editor now includes a format hint for types that require a specific syntax (e.g. `datetime64`, complex numbers, and the new datetime types), so users know exactly what input is expected.
+- **Data Browser – NumPy datetime64 array cell editing**: Editing cells in a `datetime64` array now uses `np.datetime64()` directly for type conversion, fixing failures caused by the previous `type(obj.flat[0])(value)` casting approach.
+- **Data Browser – Data mode node and repr polish**: Several small refinements improve data-mode node behavior and constructor-like/editable string representations, making object expansion decisions and inline value editing more consistent across edge cases.
+
 ## [1.11.0] - 2026-04-16
 
 ### New Features

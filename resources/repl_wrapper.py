@@ -409,11 +409,24 @@ def _json_safe_value(value):
     try:
         import numpy as np
         if isinstance(value, np.ndarray):
+            if value.dtype.kind == 'M':  # datetime64 — not JSON-serialisable via tolist(); use raw int64
+                return _json_safe_value(value.view(np.int64).tolist())
+            if value.dtype.kind == 'm':  # timedelta64 — same issue
+                return _json_safe_value(value.view(np.int64).tolist())
             return _json_safe_value(value.tolist())
         if isinstance(value, np.generic):
+            if isinstance(value, np.datetime64):
+                return int(value.view(np.int64))
+            if isinstance(value, np.timedelta64):
+                return int(value.view(np.int64))
             return _json_safe_value(value.item())
     except Exception:
         pass
+
+    import datetime as _dt
+    if isinstance(value, (_dt.datetime, _dt.date, _dt.time, _dt.timedelta)):
+        # Fallback for numpy .item() returning Python datetime objects (numpy >= 2.0)
+        return str(value)
 
     if isinstance(value, list):
         return [_json_safe_value(item) for item in value]
@@ -441,6 +454,12 @@ def _json_safe_value(value):
 
 def _pylot_dump_json_safe(value):
     return json.dumps(_json_safe_value(value), ensure_ascii=False)
+
+def _type_name(value):
+    """Return a display-friendly type name for a value."""
+    if isinstance(value, type):
+        return 'class'
+    return type(value).__name__
 
 def _short_repr(value, max_len=MAX_INSPECT_REPR_LEN):
     try:
@@ -472,17 +491,70 @@ def _short_repr(value, max_len=MAX_INSPECT_REPR_LEN):
     return text
 
 def _is_sized(value):
-    # strings/bytes are sized but we don't want to expand them as containers in data mode
-    if isinstance(value, (str, bytes, bytearray)):
-        return False
-    try:
-        len(value)
+    # Only return True for types that _inspect_children_data can actually enumerate.
+    # Generic objects that merely implement __len__ (e.g. bitarray) must not appear expandable.
+    if isinstance(value, (dict, list, tuple, set, frozenset)):
         return True
+    try:
+        import numpy as np
+        if isinstance(value, np.ndarray) and value.ndim >= 1:
+            return True
+    except Exception:
+        pass
+    return False
+
+def _is_editable_scalar(value):
+    import datetime as _dt
+    return isinstance(value, (bool, int, float, str, bytes, bytearray,
+                               _dt.datetime, _dt.date, _dt.time, _dt.timedelta))
+
+def _is_ctor_repr(value):
+    """Return True if value is a dataclass-like object whose repr contains
+    keyword arguments (e.g. Point(x=1, y=2)).
+    Accepts objects that are actual dataclasses, or whose repr looks like
+    TypeName(field=val, ...) with at least one 'key=' pair inside.
+    Used for the expandable-node decision in data mode.
+    """
+    if _is_editable_scalar(value) or _is_sized(value):
+        return False
+    # Fast-path: use dataclasses module if available
+    try:
+        import dataclasses
+        if dataclasses.is_dataclass(value) and not isinstance(value, type):
+            return True
+    except Exception:
+        pass
+    # Fallback: check repr shape TypeName(identifier=..., ...)
+    try:
+        s = repr(value)
+        tname = type(value).__name__
+        if not (s.startswith(tname + '(') and s.endswith(')')):
+            return False
+        if re.search(r'\b0x[0-9a-fA-F]+\b', s):
+            return False
+        # Must have at least one 'identifier=' keyword argument inside the parens
+        inner = s[len(tname) + 1:-1]
+        return bool(re.search(r'[A-Za-z_][A-Za-z0-9_]*\s*=', inner))
     except Exception:
         return False
 
-def _is_editable_scalar(value):
-    return isinstance(value, (bool, int, float, str, bytes, bytearray))
+def _is_repr_editable(value):
+    """Return True if the object has a constructor-like repr (TypeName(...)) with no
+    hex address, making it sensible to display and edit as a string.
+    This is the loose version of _is_ctor_repr — does NOT require keyword args.
+    """
+    if _is_editable_scalar(value) or _is_sized(value):
+        return False
+    try:
+        s = repr(value)
+        tname = type(value).__name__
+        return (
+            s.startswith(tname + '(')
+            and s.endswith(')')
+            and not re.search(r'\b0x[0-9a-fA-F]+\b', s)
+        )
+    except Exception:
+        return False
 
 def _build_accessor_for_key(key):
     return '[' + repr(key) + ']'
@@ -498,10 +570,11 @@ def _inspect_children_data(value, offset, limit):
             children.append({
                 'key': _short_repr(key, 80),
                 'accessor': _build_accessor_for_key(key),
-                'type': type(child).__name__,
+                'type': _type_name(child),
                 'repr': _short_repr(child),
                 'is_expandable': True,
                 'is_sized': _is_sized(child),
+                'is_ctor_repr': _is_ctor_repr(child),
                 'is_ndarray': (type(child).__name__ == 'ndarray' and hasattr(child, 'shape')),
                 'shape': str(child.shape) if hasattr(child, 'shape') and type(child).__name__ == 'ndarray' else None,
             })
@@ -514,10 +587,11 @@ def _inspect_children_data(value, offset, limit):
             children.append({
                 'key': str(idx),
                 'accessor': f'[{idx}]',
-                'type': type(child).__name__,
+                'type': _type_name(child),
                 'repr': _short_repr(child),
                 'is_expandable': True,
                 'is_sized': _is_sized(child),
+                'is_ctor_repr': _is_ctor_repr(child),
                 'is_ndarray': (type(child).__name__ == 'ndarray' and hasattr(child, 'shape')),
                 'shape': str(child.shape) if hasattr(child, 'shape') and type(child).__name__ == 'ndarray' else None,
             })
@@ -565,10 +639,11 @@ def _inspect_children_data(value, offset, limit):
             children.append({
                 'key': str(idx),
                 'accessor': None,
-                'type': type(child).__name__,
+                'type': _type_name(child),
                 'repr': _short_repr(child),
                 'is_expandable': True,
                 'is_sized': _is_sized(child),
+                'is_ctor_repr': _is_ctor_repr(child),
             })
         return total, children
 
@@ -606,15 +681,19 @@ def _inspect_children_object(value, offset, limit, include_private=False):
             continue
         try:
             child = getattr(value, name)
-            child_type = type(child).__name__
+            child_type = _type_name(child)
             child_repr = _short_repr(child)
             is_expandable = True # Every object can be expanded via dir() in object mode
             is_sized = _is_sized(child)
+            is_ndarray = (child_type == 'ndarray' and hasattr(child, 'shape'))
+            shape = str(child.shape) if is_ndarray else None
         except Exception as ex:
             child_type = 'error'
             child_repr = f'<error: {ex}>'
             is_expandable = False
             is_sized = False
+            is_ndarray = False
+            shape = None
         children.append({
             'key': name,
             'accessor': f'.{name}' if re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', name) else None,
@@ -622,6 +701,9 @@ def _inspect_children_object(value, offset, limit, include_private=False):
             'repr': child_repr,
             'is_expandable': is_expandable,
             'is_sized': is_sized,
+            'is_ctor_repr': _is_ctor_repr(child) if is_expandable else False,
+            'is_ndarray': is_ndarray,
+            'shape': shape,
         })
     return total, children, has_public
 
@@ -637,29 +719,67 @@ def inspect_value(expression, mode='data', offset=0, limit=100, include_private=
     # Report the empty-expression (globals) view as 'globals' instead of 'dict'
     if expr == '':
         value_type = 'globals'
+    # Report class definitions as 'class' instead of 'type'
+    elif isinstance(value, type):
+        value_type = 'class'
     is_ndarray = value_type == 'ndarray' and hasattr(value, 'shape') and hasattr(value, 'dtype')
     shape = str(value.shape) if is_ndarray else None
     dtype = str(value.dtype) if is_ndarray else None
+    is_dataframe = False
+    try:
+        if hasattr(value, 'iloc') and hasattr(value, 'columns') and hasattr(value, 'dtypes'):
+            is_dataframe = True
+            shape = str(value.shape)
+            dtypes_unique = value.dtypes.unique()
+            dtype = str(dtypes_unique[0]) if len(dtypes_unique) == 1 else 'mixed'
+    except Exception:
+        pass
     is_editable = _is_editable_scalar(value)
 
     # For numpy scalars or 0-d arrays, we want them to be editable/viewable as scalars
     _is_np_scalar = False
+    edit_hint = None
     try:
         import numpy as np
         if isinstance(value, (np.generic, np.ndarray)) and (not hasattr(value, 'shape') or value.shape == ()):
-            is_editable = True
             _is_np_scalar = True
-            if isinstance(value, np.bytes_):
-                # Use plain bytes repr so the editor shows b'...' instead of np.bytes_(b'...')
-                scalar_value = repr(bytes(value))
+            kind = value.dtype.kind if hasattr(value, 'dtype') else None
+            # Only kinds that can roundtrip from a user-entered string
+            _NP_EDITABLE_KINDS = {'b', 'i', 'u', 'f', 'c', 'S', 'U', 'M'}
+            if kind in _NP_EDITABLE_KINDS:
+                is_editable = True
+                if isinstance(value, np.bytes_):
+                    # Use plain bytes repr so the editor shows b'...' instead of np.bytes_(b'...')
+                    scalar_value = repr(bytes(value))
+                else:
+                    scalar_value = str(value)
+                if kind == 'M':  # datetime64
+                    edit_hint = 'ISO date, e.g. 2023-01-15 or 2023-01-15T12:00'
+                elif kind == 'c':  # complex
+                    edit_hint = 'e.g. 1+2j'
             else:
-                scalar_value = str(value)
+                # timedelta64, void, object — not reliably roundtrippable
+                is_editable = False
+                scalar_value = None
     except Exception:
         pass
 
     if not _is_np_scalar:
+        import datetime as _dt
         if isinstance(value, (bytes, bytearray)):
             scalar_value = repr(value)
+        elif isinstance(value, _dt.datetime):
+            scalar_value = value.isoformat()
+            edit_hint = 'ISO format, e.g. 2023-01-15T14:30:00'
+        elif isinstance(value, _dt.date):
+            scalar_value = value.isoformat()
+            edit_hint = 'ISO format, e.g. 2023-01-15'
+        elif isinstance(value, _dt.time):
+            scalar_value = value.isoformat()
+            edit_hint = 'ISO format, e.g. 14:30:00'
+        elif isinstance(value, _dt.timedelta):
+            scalar_value = str(int(value.total_seconds()))
+            edit_hint = 'Total seconds as integer'
         elif is_editable:
             scalar_value = str(value)
         else:
@@ -690,6 +810,7 @@ def inspect_value(expression, mode='data', offset=0, limit=100, include_private=
     data_children = []
     total_count = 0
     has_public = False
+    is_object_fallback = False
 
     if expr == '':
         names = sorted(persistent_globals.keys())
@@ -721,10 +842,11 @@ def inspect_value(expression, mode='data', offset=0, limit=100, include_private=
             data_children.append({
                 'key': name,
                 'accessor': name,
-                'type': type(child).__name__,
+                'type': _type_name(child),
                 'repr': _short_repr(child),
                 'is_expandable': True,
                 'is_sized': _is_sized(child),
+                'is_ctor_repr': _is_ctor_repr(child),
                 'is_ndarray': (type(child).__name__ == 'ndarray' and hasattr(child, 'shape')),
                 'shape': str(child.shape) if hasattr(child, 'shape') and type(child).__name__ == 'ndarray' else None,
             })
@@ -733,6 +855,31 @@ def inspect_value(expression, mode='data', offset=0, limit=100, include_private=
         total_count, data_children, has_public = _inspect_children_object(value, offset, limit, include_private)
     else:
         total_count, data_children = _inspect_children_data(value, offset, limit)
+        # Fallback for class objects that have no browsable data in data mode
+        # (not a list/dict/ndarray/scalar/function).
+        if total_count == 0 and not data_children and not is_editable and not is_function and not is_ndarray:
+            _has_obj_addr = bool(re.search(r'\b0x[0-9a-fA-F]+\b', str(value)))
+            _value_is_ctor_repr = _is_ctor_repr(value)
+            _value_is_repr_editable = _is_repr_editable(value)
+            if _value_is_ctor_repr:
+                # Dataclass-like repr – show editable string and load attributes for tree expand.
+                is_editable = True
+                scalar_value = str(value)
+                _attr_count, _attr_children, _has_public = _inspect_children_object(value, offset, limit, include_private)
+                if _attr_children:
+                    total_count, data_children, has_public = _attr_count, _attr_children, _has_public
+            elif _value_is_repr_editable:
+                # Constructor-like repr without keyword args (e.g. bitarray('00011011')):
+                # show as editable string only, no attribute expansion.
+                is_editable = True
+                scalar_value = str(value)
+            elif _has_obj_addr:
+                # Repr contains a raw object address → meaningful __repr__ is missing.
+                # Fall back to attribute list, but only when there are public attributes.
+                _attr_count, _attr_children, _has_public = _inspect_children_object(value, offset, limit, include_private)
+                if _attr_children and _has_public:
+                    total_count, data_children, has_public = _attr_count, _attr_children, _has_public
+                    is_object_fallback = True
 
     # For editable bytes/bytearray, report the byte length (children are not enumerated)
     if is_editable and isinstance(value, (bytes, bytearray)):
@@ -744,16 +891,19 @@ def inspect_value(expression, mode='data', offset=0, limit=100, include_private=
         'shape': shape,
         'dtype': dtype,
         'is_ndarray': is_ndarray,
+        'is_dataframe': is_dataframe,
         'is_container': is_container,
         'is_editable_scalar': is_editable,
         'is_function': is_function,
         'func_params': func_params,
         'func_doc': func_doc,
         'scalar_value': scalar_value,
+        'edit_hint': edit_hint,
         'str_value': str(value),
         'total_count': total_count,
         'children': data_children,
         'has_public': has_public,
+        'is_object_fallback': is_object_fallback,
         'offset': offset,
         'limit': limit,
         'has_more': (offset + len(data_children)) < total_count,
@@ -797,7 +947,73 @@ def set_scalar_value(expression, raw_value):
             raise ValueError("Value must be a bytes literal (e.g. b'...')")
         parsed = bytearray(lit) if isinstance(current, bytearray) else bytes(lit)
     else:
-        raise ValueError(f'Type {type(current).__name__} is not editable in data mode')
+        import datetime as _dt
+        if isinstance(current, _dt.datetime):
+            try:
+                parsed = _dt.datetime.fromisoformat(text.strip())
+            except ValueError:
+                raise ValueError("Expected ISO format, e.g. 2023-01-15T14:30:00")
+        elif isinstance(current, _dt.date):
+            try:
+                parsed = _dt.date.fromisoformat(text.strip())
+            except ValueError:
+                raise ValueError("Expected ISO format, e.g. 2023-01-15")
+        elif isinstance(current, _dt.time):
+            try:
+                parsed = _dt.time.fromisoformat(text.strip())
+            except ValueError:
+                raise ValueError("Expected ISO format, e.g. 14:30:00")
+        elif isinstance(current, _dt.timedelta):
+            try:
+                parsed = _dt.timedelta(seconds=int(text.strip()))
+            except ValueError:
+                raise ValueError("Expected total seconds as integer, e.g. 3600")
+        else:
+            # Try numpy scalar types
+            _handled_as_np = False
+            try:
+                import numpy as np
+                if isinstance(current, (np.generic, np.ndarray)) and (not hasattr(current, 'shape') or current.shape == ()):
+                    stripped = text.strip()
+                    kind = current.dtype.kind if hasattr(current, 'dtype') else None
+                    if isinstance(current, np.bool_):
+                        lo = stripped.lower()
+                        if lo in ('true', '1', 'yes', 'on'):
+                            parsed = np.bool_(True)
+                        elif lo in ('false', '0', 'no', 'off'):
+                            parsed = np.bool_(False)
+                        else:
+                            raise ValueError('Boolean value must be true/false')
+                    elif kind == 'M':  # datetime64
+                        parsed = np.datetime64(stripped)
+                    elif kind == 'c':  # complex
+                        parsed = type(current)(complex(stripped))
+                    elif isinstance(current, np.integer):
+                        parsed = type(current)(int(stripped))
+                    elif isinstance(current, np.floating):
+                        parsed = type(current)(float(stripped))
+                    elif isinstance(current, np.str_):
+                        parsed = np.str_(stripped)
+                    elif isinstance(current, np.bytes_):
+                        m = re.match(r'^np\.bytes_\((b["\'].*["\'])\)$', stripped, re.DOTALL)
+                        if m:
+                            stripped = m.group(1)
+                        lit = ast.literal_eval(stripped)
+                        if not isinstance(lit, bytes):
+                            raise ValueError("Value must be a bytes literal (e.g. b'...')")
+                        parsed = np.bytes_(lit)
+                    else:
+                        raise ValueError(f'Type {type(current).__name__} is not editable in data mode')
+                    _handled_as_np = True
+            except ImportError:
+                pass
+            if not _handled_as_np:
+                # Generic eval fallback: supports constructor-like repr edits
+                # (e.g. user edits "Point(1, 2)" → "Point(3, 4)").
+                try:
+                    parsed = eval(text.strip(), persistent_globals)
+                except Exception as _eval_err:
+                    raise ValueError(f'Cannot parse value: {_eval_err}')
 
     persistent_globals['__pylot_tmp_set_value__'] = parsed
     try:
@@ -920,12 +1136,24 @@ def read_stdin():
                             indices = command.get('indices', [])
                             raw_value = command.get('value', 0)
                             obj = eval(expr, persistent_globals)
-                            # Try to cast value to the array's dtype
+                            # Cast value to the array's dtype, then assign
                             try:
-                                raw_value = type(obj.flat[0])(raw_value)
-                            except Exception:
-                                pass
-                            obj[tuple(int(i) for i in indices)] = raw_value
+                                import numpy as np
+                                if hasattr(obj, 'dtype') and obj.dtype.kind == 'M':
+                                    # datetime64: value is the raw int64 unit count
+                                    obj.view(np.int64)[tuple(int(i) for i in indices)] = int(raw_value)
+                                else:
+                                    try:
+                                        raw_value = type(obj.flat[0])(raw_value)
+                                    except Exception:
+                                        pass
+                                    obj[tuple(int(i) for i in indices)] = raw_value
+                            except ImportError:
+                                try:
+                                    raw_value = type(obj.flat[0])(raw_value)
+                                except Exception:
+                                    pass
+                                obj[tuple(int(i) for i in indices)] = raw_value
                             kwargs = dict(success=True)
                             if req_id is not None:
                                 kwargs['requestId'] = req_id

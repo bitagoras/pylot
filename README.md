@@ -14,7 +14,7 @@ Run Python code directly from the editor with smart selection and visual line ma
 - **Cell execution** – `Shift+Enter` at a cell comment, which starts with `#%`, executes the entire cell until the next cell comment or the end of the file.
 - **Variable inspection** – Hover over any variable to see its type and current value in a tooltip, even while the code is running. It also shows the length of sized objects and the shape of NumPy arrays.
 - **Expression evaluation** – Pressing `Shift+Tab` evaluates any selected expression or variable at the cursor and shows the result in a tooltip.
-- **Data browser** – Inspect any Python variable in a dedicated panel: a grid view for arrays, matrices, and data frames with buffered scrolling, color mapping, and inline editing; a tree view for objects, dicts, and lists. Accepts arbitrary Python expressions and slice notation in the expression field.
+- **Data browser** – Inspect and edit any Python variable or expression in a dedicated panel, with a data mode for arrays and data frames and an object mode for dicts, lists, and arbitrary objects. Open with `Ctrl+Shift+Space` or via the hover tooltip.
 - **Variable Overlay** – See variable values and expression results by inlay hints directly in the editor, as ghost text right after the line.
 - **For-Loop Progress Bars** – Automatically shows progress bars for long-running `for` loops directly in the editor: `[■■■■■■■■‑‑‑‑‑‑‑‑‑‑‑‑‑] 32%, i=4`.
 - **Live Watches** – Add `#?` at the end of an assignment or expression line to show live inlay updates for that line while it executes.
@@ -49,20 +49,24 @@ Run Python code directly from the editor with smart selection and visual line ma
 
 ### Open the Data Browser
 
-The data browser offers dedicated views for exploring your data variables: a grid view for arrays, tensors, matrices, and data frames, and a tree view for dictionaries, lists, and objects.
+Press `Ctrl+Shift+Space` to open the data browser for the variable or expression at the cursor. Alternatively, hover over any variable and click the `data` or `obj` link in the tooltip.
 
-1. Hover a variable or expression to open the tooltip.
-2. Click the `Show data` or `obj` link in the tooltip.
-3. In the viewer, use the expression field to enter any valid Python expression (for example, `matrix-10`, `matrix[:, ::-1]`, `matrix.T`, or `data["keys"]`).
+To get an overview of all variables in the current Python session, press `Ctrl+Shift+Space` with the cursor at an empty space, or use the **Show Global Variables** command. This opens the data browser with an empty expression and all globals listed as a tree, letting you navigate into any variable from there.
+
+The data browser provides two complementary views:
+
+- **Data mode** – A spreadsheet-style grid for numpy arrays, tensors, matrices, and data frames, and a tree view for dicts, lists, and objects. Supports buffered scrolling through large datasets, color mapping to visualize value distributions, and inline cell editing. Accepts arbitrary Python expressions and slice notation in the expression field (e.g. `matrix[:, ::-1]`, `matrix.T - 10`). Most values can be edited. Datetime values are edited through a calendar picker.
+- **Object mode** – A read-only collapsible tree for exploring any kind of objects, and any nested Python structure. Lets you browse attributes, methods and items at any depth.
 
 <br>
 <div align="left">
-<img src="data_browser.png" alt="Data browser array view" width="450" />
+<img src="resources/doc/data_browser.png" alt="Data browser array view" width="450" />
 </div>
 <br>
 <div align="left">
-<img src="array_view.png" alt="Array viewer screen shot" width="450" />
+<img src="resources/doc/array_view.png" alt="Array viewer screen shot" width="450" />
 </div>
+<br>
 
 ## When to use Pylot
 

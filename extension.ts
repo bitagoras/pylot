@@ -1152,6 +1152,34 @@ export function activate(context: vscode.ExtensionContext) {
     // ── Smart-selection helpers ──────────────────────────────────────────
 
     /**
+     * Return the range of the member-access expression under the cursor.
+     * When the cursor sits on `someVar` inside `someObj.someVar`, the range is
+     * expanded leftward to cover the full `someObj.someVar` chain.
+     * Falls back to the plain word range if no leading `.identifier` chain exists.
+     */
+    function getMemberExpressionRange(document: vscode.TextDocument, position: vscode.Position): vscode.Range | undefined {
+        const wordRange = document.getWordRangeAtPosition(position);
+        if (!wordRange) { return undefined; }
+
+        const lineText = document.lineAt(position.line).text;
+        let startChar = wordRange.start.character;
+
+        // Walk backwards, consuming ".identifier" segments
+        while (startChar > 0) {
+            if (lineText[startChar - 1] !== '.') { break; }
+            let i = startChar - 2;
+            if (i < 0 || !/[a-zA-Z0-9_]/.test(lineText[i])) { break; }
+            while (i > 0 && /[a-zA-Z0-9_]/.test(lineText[i - 1])) { i--; }
+            startChar = i;
+        }
+
+        if (startChar === wordRange.start.character) {
+            return wordRange;
+        }
+        return new vscode.Range(new vscode.Position(position.line, startChar), wordRange.end);
+    }
+
+    /**
      * Return the first and last lines that contain non-blank text, ignoring
      * leading/trailing empty lines. Used to detect when a selection range
      * wraps the entire file (i.e. the root Module node).
@@ -1739,8 +1767,8 @@ export function activate(context: vscode.ExtensionContext) {
         const hadSelection = !selection.isEmpty;
         let code: string;
         if (selection.isEmpty) {
-            // No selection: evaluate the word at cursor
-            const wordRange = editor.document.getWordRangeAtPosition(selection.active);
+            // No selection: evaluate the member expression at cursor (e.g. obj.attr)
+            const wordRange = getMemberExpressionRange(editor.document, selection.active);
             if (!wordRange) { return; }
             code = editor.document.getText(wordRange).trim();
             selection = new vscode.Selection(wordRange.start, wordRange.end);
@@ -1934,7 +1962,7 @@ export function activate(context: vscode.ExtensionContext) {
                 return null;
             }
 
-            const range = document.getWordRangeAtPosition(position);
+            const range = getMemberExpressionRange(document, position);
             if (!range) { return null; }
 
             const word = document.getText(range);
@@ -2434,6 +2462,7 @@ export function activate(context: vscode.ExtensionContext) {
         // Mutable expression — updated whenever the webview changes the active variable
         let currentExpression = expression;
         let currentMode: 'data' | 'object' = initialMode;
+        let isDataFrame = false;
 
         panel.webview.onDidReceiveMessage(async (msg: any) => {
             // Any message that carries an expression field updates the active variable
@@ -2509,15 +2538,16 @@ export function activate(context: vscode.ExtensionContext) {
 
                 case 'requestMeta': {
                     const reqId = nextReqId();
-                    const code = `(lambda _x: __import__('json').dumps([list(_x.shape), str(_x.dtype), int(_x.ndim)]))((${currentExpression}))`;
+                    const code = `(lambda _x: __import__('json').dumps([list(_x.shape), 'mixed' if len(_x.dtypes.unique()) > 1 else str(_x.dtypes.unique()[0]), 2, True, [str(c) for c in _x.columns.tolist()]] if (hasattr(_x, 'iloc') and hasattr(_x, 'columns')) else [list(_x.shape), str(_x.dtype), int(_x.ndim), False, None]))((${currentExpression}))`;
                     const raw = await evalForViewer(code, reqId);
                     if (raw === null) {
                         panel.webview.postMessage({ type: 'metaError', expression: currentExpression });
                         return;
                     }
                     try {
-                        const [shape, dtype, ndim] = JSON.parse(raw);
-                        panel.webview.postMessage({ type: 'meta', expression: currentExpression, shape, dtype, ndim });
+                        const [shape, dtype, ndim, is_df, col_labels] = JSON.parse(raw);
+                        isDataFrame = !!is_df;
+                        panel.webview.postMessage({ type: 'meta', expression: currentExpression, shape, dtype, ndim, isDataFrame, colLabels: col_labels });
                     } catch {
                         panel.webview.postMessage({ type: 'metaError', expression: currentExpression });
                     }
@@ -2527,18 +2557,28 @@ export function activate(context: vscode.ExtensionContext) {
                 case 'requestChunk': {
                     const { r0, r1, c0, c1, dimIndices, chunkId } = msg;
                     const reqId = nextReqId();
-                    const extraDims = (dimIndices as number[]).map(i => String(i)).join(',');
-                    const sliceExpr = extraDims
-                        ? `__import__('builtins')._pylot_dump_json_safe((${currentExpression})[${extraDims},${r0}:${r1},${c0}:${c1}])`
-                        : `__import__('builtins')._pylot_dump_json_safe((${currentExpression})[${r0}:${r1},${c0}:${c1}])`;
+                    let sliceExpr: string;
+                    if (isDataFrame) {
+                        sliceExpr = `(lambda _x: __import__('json').dumps({'data': [['NaN' if (isinstance(v, float) and v != v) else (v.item() if hasattr(v, 'item') else v) for v in row] for row in _x.iloc[${r0}:${r1},${c0}:${c1}].values.tolist()], 'row_labels': [str(i) for i in _x.index[${r0}:${r1}].tolist()]}))((${currentExpression}))`;
+                    } else {
+                        const extraDims = (dimIndices as number[]).map(i => String(i)).join(',');
+                        sliceExpr = extraDims
+                            ? `__import__('builtins')._pylot_dump_json_safe((${currentExpression})[${extraDims},${r0}:${r1},${c0}:${c1}])`
+                            : `__import__('builtins')._pylot_dump_json_safe((${currentExpression})[${r0}:${r1},${c0}:${c1}])`;
+                    }
                     const raw = await evalForViewer(sliceExpr, reqId);
                     if (raw === null) {
                         panel.webview.postMessage({ type: 'chunkError', chunkId });
                         return;
                     }
                     try {
-                        const data = JSON.parse(raw);
-                        panel.webview.postMessage({ type: 'chunkData', chunkId, data, r0, c0 });
+                        if (isDataFrame) {
+                            const parsed = JSON.parse(raw);
+                            panel.webview.postMessage({ type: 'chunkData', chunkId, data: parsed.data, r0, c0, rowLabels: parsed.row_labels });
+                        } else {
+                            const data = JSON.parse(raw);
+                            panel.webview.postMessage({ type: 'chunkData', chunkId, data, r0, c0 });
+                        }
                     } catch {
                         panel.webview.postMessage({ type: 'chunkError', chunkId });
                     }
@@ -2566,7 +2606,9 @@ export function activate(context: vscode.ExtensionContext) {
                 case 'requestColorRange': {
                     const reqId = nextReqId();
                     const { rowStride, colStride } = msg;
-                    const code = `(lambda _x: [float(_x[::${rowStride},::${colStride}].min()), float(_x[::${rowStride},::${colStride}].max())])((${currentExpression}))`;
+                    const code = isDataFrame
+                        ? `(lambda _x: (lambda v: [float(v.min()), float(v.max())])(__import__('numpy').array(_x.iloc[::${rowStride},::${colStride}].values, dtype=float)))((${currentExpression}))`
+                        : `(lambda _x: [float(_x[::${rowStride},::${colStride}].min()), float(_x[::${rowStride},::${colStride}].max())])((${currentExpression}))`;
                     const raw = await evalForViewer(code, reqId);
                     if (raw !== null) {
                         try {
@@ -2632,7 +2674,7 @@ export function activate(context: vscode.ExtensionContext) {
             if (!sel.isEmpty) {
                 return editor.document.getText(sel).trim();
             }
-            const wordRange = editor.document.getWordRangeAtPosition(sel.active);
+            const wordRange = getMemberExpressionRange(editor.document, sel.active);
             if (wordRange) {
                 return editor.document.getText(wordRange).trim();
             }
