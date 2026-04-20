@@ -49,9 +49,9 @@ Run Python code directly from the editor with smart selection and visual line ma
 
 ### Open the Data Browser
 
-Press `Ctrl+Shift+Space` to open the data browser for the variable or expression at the cursor. Alternatively, hover over any variable and click the `data` or `obj` link in the tooltip.
+Press `Ctrl+Shift+Space` to open the data browser for the variable at the cursor or the selected expression. Alternatively, hover over any variable (or press `Shift+Tab`) to show the tooltip and click the `data` or `obj` link.
 
-To get an overview of all variables in the current Python session, press `Ctrl+Shift+Space` with the cursor at an empty space, or use the **Show Global Variables** command. This opens the data browser with an empty expression and all globals listed as a tree, letting you navigate into any variable from there.
+To get an overview of all variables in the current Python session open the data browser with an empty expression or use the **Show Global Variables** command. This shows all globals listed as a tree, letting you navigate into any variable from there.
 
 The data browser provides two complementary views:
 
