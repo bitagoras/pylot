@@ -2,6 +2,12 @@
 
 All notable changes to the **Pylot** extension will be documented in this file.
 
+## [1.12.1] - 2026-04-22
+
+### Improvements
+- **Editor toolbar – button grouping**: The three Pylot editor title buttons (*Run whole file*, *Execute without moving*, *Execute and advance*) are now consistently grouped together in the toolbar. Previously the "Run whole file" button could appear between VS Code's built-in *previous/next change* navigation arrows.
+- **Hover tooltip – empty string result**: When a hovered expression evaluates to an empty string, the tooltip now shows *(empty string)* in italics instead of the generic "Evaluated successfully (no output)" message.
+
 ## [1.12.0] - 2026-04-19
 
 ### New Features

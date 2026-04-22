@@ -14,7 +14,7 @@ Run Python code directly from the editor with smart selection and visual line ma
 - **Cell execution** – `Shift+Enter` at a cell comment, which starts with `#%`, executes the entire cell until the next cell comment or the end of the file.
 - **Variable inspection** – Hover over any variable to see its type and current value in a tooltip, even while the code is running. It also shows the length of sized objects and the shape of NumPy arrays.
 - **Expression evaluation** – Pressing `Shift+Tab` evaluates any selected expression or variable at the cursor and shows the result in a tooltip.
-- **Data browser** – Inspect and edit any Python variable or expression in a dedicated panel, with a data mode for arrays and data frames and an object mode for dicts, lists, and arbitrary objects. Open with `Ctrl+Shift+Space` or via the hover tooltip.
+- **Data browser** – Inspect and edit any Python variable or expression in a dedicated panel, with a data mode to show values, arrays, dicts, lists, and an object mode to show all attributes of Python objects. Open with `Ctrl+Shift+Space` or via the hover tooltip.
 - **Variable Overlay** – See variable values and expression results by inlay hints directly in the editor, as ghost text right after the line.
 - **For-Loop Progress Bars** – Automatically shows progress bars for long-running `for` loops directly in the editor: `[■■■■■■■■‑‑‑‑‑‑‑‑‑‑‑‑‑] 32%, i=4`.
 - **Live Watches** – Add `#?` at the end of an assignment or expression line to show live inlay updates for that line while it executes.
@@ -51,11 +51,11 @@ Run Python code directly from the editor with smart selection and visual line ma
 
 Press `Ctrl+Shift+Space` to open the data browser for the variable at the cursor or the selected expression. Alternatively, hover over any variable (or press `Shift+Tab`) to show the tooltip and click the `data` or `obj` link.
 
-To get an overview of all variables in the current Python session open the data browser with an empty expression or use the **Show Global Variables** command. This shows all globals listed as a tree, letting you navigate into any variable from there.
+To get an overview of all variables in the current Python session open the data browser with an empty expression or use the **Show Global Variables** command. This shows all globals listed as a tree, letting you navigate into any global variable.
 
 The data browser provides two complementary views:
 
-- **Data mode** – A spreadsheet-style grid for numpy arrays, tensors, matrices, and data frames, and a tree view for dicts, lists, and objects. Supports buffered scrolling through large datasets, color mapping to visualize value distributions, and inline cell editing. Accepts arbitrary Python expressions and slice notation in the expression field (e.g. `matrix[:, ::-1]`, `matrix.T - 10`). Most values can be edited. Datetime values are edited through a calendar picker.
+- **Data mode** – A spreadsheet-style grid for numpy arrays, tensors, matrices, and data frames, and a tree view for dicts and lists. The array view supports buffered scrolling through large datasets, color mapping to visualize value distributions, and inline cell editing. Accepts arbitrary Python expressions and slice notation in the expression field (e.g. `matrix[:, ::-1]`, `matrix.T - 10`). Most values can be edited. Datetime values are edited through a calendar picker.
 - **Object mode** – A read-only collapsible tree for exploring any kind of objects, and any nested Python structure. Lets you browse attributes, methods and items at any depth.
 
 <br>

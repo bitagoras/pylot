@@ -405,24 +405,6 @@
   #scalar-input.changed { outline: 1px solid #e38e1b !important; outline-offset: -1px; }
   #scalar-input.changed:focus { outline: 1px solid #e38e1b !important; outline-offset: -1px; }
   #scalar-help { color: var(--index-bg); font-size: 11px; margin-top: 6px; flex-shrink: 0; }
-  /* ── Bool toggle switch ── */
-  #scalar-bool-row { display: none; align-items: center; gap: 12px; flex-shrink: 0; }
-  .bool-toggle-label { font-size: 13px; min-width: 42px; font-family: var(--vscode-editor-font-family, monospace); color: var(--cell-fg); }
-  .bool-toggle-wrap { position: relative; display: inline-block; width: 34px; height: 18px; flex-shrink: 0; }
-  .bool-toggle-wrap input { opacity: 0; width: 0; height: 0; position: absolute; }
-  .bool-toggle-slider {
-    position: absolute; cursor: pointer; inset: 0;
-    background: var(--btn-bg); border: 1px solid var(--border);
-    border-radius: 18px; transition: background 0.18s, border-color 0.18s;
-  }
-  .bool-toggle-slider::before {
-    content: ''; position: absolute;
-    width: 12px; height: 12px; left: 2px; top: 2px;
-    background: var(--btn-fg); border-radius: 50%;
-    transition: transform 0.18s, background 0.18s;
-  }
-  .bool-toggle-wrap input:checked + .bool-toggle-slider { background: var(--btn-active-bg); border-color: var(--btn-active-bg); }
-  .bool-toggle-wrap input:checked + .bool-toggle-slider::before { transform: translateX(16px); background: #fff; }
   #scalar-dt-picker {
     flex-shrink: 0;
     width: 280px;
@@ -589,7 +571,6 @@
     padding: 2px 2px;
   }
   .dtp-time-sep { color: var(--index-bg); font-weight: 700; font-size: 13px; }
-  .dtp-time-unit { font-size: 11px; color: var(--muted); margin-right: 4px; }
   /* iso text input */
   .dtp-iso-row {
     display: flex;
@@ -684,13 +665,6 @@
 <div id="tree-host"></div>
 
 <div id="scalar-host">
-  <div id="scalar-bool-row">
-    <span class="bool-toggle-label" id="scalar-bool-text">False</span>
-    <label class="bool-toggle-wrap" title="Toggle True/False">
-      <input type="checkbox" id="scalar-bool-checkbox">
-      <span class="bool-toggle-slider"></span>
-    </label>
-  </div>
   <textarea id="scalar-input" spellcheck="false" placeholder="Edit value"></textarea>
   <div id="scalar-help">Esc to cancel</div>
   <!-- Inline datetime picker for scalar datetime values -->
@@ -709,11 +683,11 @@
     <div class="dtp-days" id="sdtp-days"></div>
     <div class="dtp-time" id="sdtp-time-row">
       <label>Time</label>
-      <input class="dtp-time-input" id="sdtp-hour" type="number" min="0" max="23" placeholder="HH"><span class="dtp-time-unit">h</span>
+      <input class="dtp-time-input" id="sdtp-hour" type="number" min="0" max="23" placeholder="HH">
       <span class="dtp-time-sep">:</span>
-      <input class="dtp-time-input" id="sdtp-min" type="number" min="0" max="59" placeholder="MM"><span class="dtp-time-unit">min</span>
+      <input class="dtp-time-input" id="sdtp-min" type="number" min="0" max="59" placeholder="MM">
       <span class="dtp-time-sep">:</span>
-      <input class="dtp-time-input" id="sdtp-sec" type="number" min="0" max="59" placeholder="SS"><span class="dtp-time-unit">s</span>
+      <input class="dtp-time-input" id="sdtp-sec" type="number" min="0" max="59" placeholder="SS">
     </div>
   </div>
 </div>
@@ -744,11 +718,11 @@
     <div class="dtp-days" id="dtp-days"></div>
     <div class="dtp-time" id="dtp-time-row">
       <label>Time</label>
-      <input class="dtp-time-input" id="dtp-hour" type="number" min="0" max="23" placeholder="HH"><span class="dtp-time-unit">h</span>
+      <input class="dtp-time-input" id="dtp-hour" type="number" min="0" max="23" placeholder="HH">
       <span class="dtp-time-sep">:</span>
-      <input class="dtp-time-input" id="dtp-min" type="number" min="0" max="59" placeholder="MM"><span class="dtp-time-unit">min</span>
+      <input class="dtp-time-input" id="dtp-min" type="number" min="0" max="59" placeholder="MM">
       <span class="dtp-time-sep">:</span>
-      <input class="dtp-time-input" id="dtp-sec" type="number" min="0" max="59" placeholder="SS"><span class="dtp-time-unit">s</span>
+      <input class="dtp-time-input" id="dtp-sec" type="number" min="0" max="59" placeholder="SS">
     </div>
     <div class="dtp-iso-row">
       <input class="dtp-iso-input" id="dtp-iso" type="text" spellcheck="false" placeholder="ISO datetime">
@@ -773,9 +747,7 @@
   let COL_W = 96;
   const COL_W_DEFAULT = 96;
   const COL_W_DATETIME = 150;
-  let IDX_COL_W = 56;
-  const IDX_COL_W_DEFAULT = 56;
-  const IDX_COL_W_DATAFRAME = 80;
+  const IDX_COL_W = 56;
   const IDX_ROW_H = 22;
   const DISPLAY_DECIMALS = 5;
   const SCROLL_SETTLE_MS = 160;
@@ -797,9 +769,6 @@
   let visRows = 1;
   let visCols = 1;
   let is1D = false;
-  let isDataFrame = false;
-  let dfColLabels = null;      // array of column name strings for DataFrames
-  let dfRowLabels = new Map(); // r -> label string for DataFrames
   let currentBufferKeys = new Set();
   let viewerMode = 'data';
   let currentInspect = null;
@@ -1513,28 +1482,11 @@
     setHostVisibility('scalar');
     const input = document.getElementById('scalar-input');
     const helpEl = document.getElementById('scalar-help');
-    const boolRow = document.getElementById('scalar-bool-row');
 
-    input.value = inspect.scalar_value ?? inspect.str_value ?? '';
+    input.value = inspect.scalar_value ?? '';
     input.readOnly = false;
     input.dataset.initialValue = input.value;
     input.classList.remove('changed', 'ok', 'err');
-
-    // Bool: show toggle instead of text input
-    if (inspect.type === 'bool') {
-      const isTrue = input.value === 'True';
-      const cb = document.getElementById('scalar-bool-checkbox');
-      cb.checked = isTrue;
-      document.getElementById('scalar-bool-text').textContent = isTrue ? 'True' : 'False';
-      boolRow.style.display = 'flex';
-      input.style.display = 'none';
-      helpEl.textContent = 'Click toggle to switch between True and False.';
-      hideScalarDatetimePicker();
-      return;
-    }
-
-    boolRow.style.display = 'none';
-    input.style.display = '';
 
     if (inspect.type === 'str') {
       input.classList.add('scalar-string');
@@ -1564,8 +1516,6 @@
     const input = document.getElementById('scalar-input');
     const helpEl = document.getElementById('scalar-help');
 
-    document.getElementById('scalar-bool-row').style.display = 'none';
-    input.style.display = '';
     input.value = inspect.str_value ?? inspect.scalar_value ?? '';
     input.readOnly = true;
     input.dataset.initialValue = input.value;
@@ -1593,7 +1543,7 @@
             repr: c.repr,
             depth: 0,
             expanded: false,
-            canExpand: viewerMode === 'data' ? ((!!c.is_sized || !!c.is_ctor_repr) && c.type !== 'Tensor' && (c.type !== 'ndarray' || (!!c.is_ndarray && !!c.shape && c.shape.split(',').length >= 2))) : !!c.is_expandable,
+            canExpand: (viewerMode === 'data' && !inspect.is_object_fallback) ? (!!c.is_sized && c.type !== 'Tensor' && (c.type !== 'ndarray' || (!!c.is_ndarray && !!c.shape && c.shape.split(',').length >= 2))) : (inspect.is_object_fallback ? (!!c.is_sized || (!c.is_primitive && !!c.is_expandable)) : !!c.is_expandable),
             childrenLoaded: false,
             children: [],
             loadedCount: 0,
@@ -1931,7 +1881,7 @@
         repr: child.repr,
         depth: node.depth + 1,
         expanded: false,
-        canExpand: viewerMode === 'data' ? ((!!child.is_sized || !!child.is_ctor_repr) && child.type !== 'Tensor' && (child.type !== 'ndarray' || (!!child.is_ndarray && !!child.shape && child.shape.split(',').length >= 2))) : !!child.is_expandable,
+        canExpand: (viewerMode === 'data' && !inspect.is_object_fallback) ? (!!child.is_sized && child.type !== 'Tensor' && (child.type !== 'ndarray' || (!!child.is_ndarray && !!child.shape && child.shape.split(',').length >= 2))) : (inspect.is_object_fallback ? (!!child.is_sized || (!child.is_primitive && !!child.is_expandable)) : !!child.is_expandable),
         childrenLoaded: false,
         children: [],
         loadedCount: 0,
@@ -2014,7 +1964,7 @@
     currentInspect = inspect;
     setInfoLabelFromInspect(inspect);
 
-    if (viewerMode === 'data' && inspect && (inspect.is_ndarray || inspect.is_dataframe)) {
+    if (viewerMode === 'data' && inspect && inspect.is_ndarray) {
       setHostVisibility('grid');
       vscode.postMessage({ type: 'requestMeta', expression: currentExpression, mode: viewerMode });
       return;
@@ -2080,15 +2030,6 @@
     vscode.postMessage({ type: 'setScalarValue', expression: currentExpression, value: input.value, reqId, mode: viewerMode });
   }
 
-  document.getElementById('scalar-bool-checkbox').addEventListener('change', (e) => {
-    const isTrue = e.target.checked;
-    document.getElementById('scalar-bool-text').textContent = isTrue ? 'True' : 'False';
-    const input = document.getElementById('scalar-input');
-    input.value = isTrue ? 'True' : 'False';
-    input.dataset.initialValue = input.value;
-    commitScalarValue();
-  });
-
   document.getElementById('mode-toggle').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-mode]');
     if (!btn) return;
@@ -2151,11 +2092,6 @@
     isBoolDtype = false;
     isDatetimeDtype = false;
     dtUnit = 'ns';
-    isDataFrame = false;
-    dfColLabels = null;
-    dfRowLabels = new Map();
-    IDX_COL_W = IDX_COL_W_DEFAULT;
-    document.documentElement.style.setProperty('--idx-col-w', IDX_COL_W + 'px');
     chunkCache.clear(); pendingChunks.clear();
     currentBufferKeys = new Set();
     bufferTileR0 = 0; bufferTileC0 = 0;
@@ -2285,23 +2221,10 @@
 
     meta = { shape: msg.shape, dtype: msg.dtype, ndim: msg.ndim };
     is1D = msg.ndim === 1;
-    isDataFrame = !!msg.isDataFrame;
-    dfColLabels = msg.colLabels || null;
-    dfRowLabels = new Map();
+    document.getElementById('info-label').textContent = `${msg.shape.join(' \u00d7 ')}  ${msg.dtype}`;
 
-    if (isDataFrame) {
-      IDX_COL_W = IDX_COL_W_DATAFRAME;
-      document.documentElement.style.setProperty('--idx-col-w', IDX_COL_W + 'px');
-      const dtypeLabel = meta.dtype !== 'mixed' ? `  ${meta.dtype}` : '';
-      document.getElementById('info-label').textContent = `${msg.shape.join(' \u00d7 ')}  DataFrame${dtypeLabel}`;
-    } else {
-      IDX_COL_W = IDX_COL_W_DEFAULT;
-      document.documentElement.style.setProperty('--idx-col-w', IDX_COL_W + 'px');
-      document.getElementById('info-label').textContent = `${msg.shape.join(' \u00d7 ')}  ${msg.dtype}`;
-    }
-
-    isBoolDtype = !isDataFrame && meta.dtype === 'bool';
-    isDatetimeDtype = !isDataFrame && meta.dtype.startsWith('datetime64');
+    isBoolDtype = meta.dtype === 'bool';
+    isDatetimeDtype = meta.dtype.startsWith('datetime64');
     if (isDatetimeDtype) {
       const m = meta.dtype.match(/\[(\w+)\]/);
       dtUnit = m ? m[1] : 'ns';
@@ -2694,7 +2617,7 @@
     for (let c = c0; c < c1; c++) {
       const d = document.createElement('div');
       d.className = 'col-idx-cell';
-      d.textContent = is1D ? 'value' : (dfColLabels ? (dfColLabels[c] !== undefined ? dfColLabels[c] : c) : c);
+      d.textContent = is1D ? 'value' : c;
       colIdxRow.appendChild(d);
     }
 
@@ -2704,7 +2627,7 @@
       const row = document.createElement('div');
       row.className = 'data-row';
       const ri = document.createElement('div');
-      ri.className = 'row-idx-cell'; ri.textContent = dfRowLabels.has(r) ? dfRowLabels.get(r) : r;
+      ri.className = 'row-idx-cell'; ri.textContent = r;
       row.appendChild(ri);
       for (let c = c0; c < c1; c++) {
         const cell = document.createElement('div');
@@ -2719,7 +2642,7 @@
         } else {
           setCellValue(cell, val);
         }
-        if (!isDataFrame) cell.addEventListener('dblclick', () => startEdit(cell, r, c));
+        cell.addEventListener('dblclick', () => startEdit(cell, r, c));
         row.appendChild(cell);
       }
       dataRows.appendChild(row);
@@ -2732,18 +2655,13 @@
 
   function setCellValue(cell, val) {
     cell.classList.remove('loading');
-    if (typeof val === 'boolean') {
+    if (isBoolDtype && typeof val === 'boolean') {
       const numVal = val ? 1 : 0;
       cell.textContent = val ? 'True' : 'False';
       cell.dataset.v = numVal;
-      if (isBoolDtype) {
-        const bg = valueToColor(numVal);
-        cell.style.background = bg || '';
-        cell.style.color = bg && needsDarkText(bg) ? '#111' : '';
-      } else {
-        cell.style.background = '';
-        cell.style.color = '';
-      }
+      const bg = valueToColor(numVal);
+      cell.style.background = bg || '';
+      cell.style.color = bg && needsDarkText(bg) ? '#111' : '';
       cell.style.fontWeight = '';
     } else if (isDatetimeDtype && typeof val === 'number') {
       const d = int64ToDate(val, dtUnit);
@@ -2873,9 +2791,6 @@
     pendingChunks.delete(msg.chunkId);
     if (!isKeyInCurrentBuffer(msg.chunkId)) return;
     chunkCache.set(msg.chunkId, is1D ? msg.data.map(v => [v]) : msg.data);
-    if (msg.rowLabels) {
-      msg.rowLabels.forEach((label, i) => dfRowLabels.set(msg.r0 + i, label));
-    }
     document.querySelectorAll('.data-cell.loading').forEach(cell => {
       const val = getCachedValue(+cell.dataset.r, +cell.dataset.c);
       if (val !== undefined) setCellValue(cell, val);
@@ -3194,9 +3109,21 @@
     cell.classList.add('editing'); cell.innerHTML = '';
 
     if (isBoolDtype) {
-      // Directly toggle the bool value on click — no dropdown needed
-      const boolVal = oldText !== 'True';
-      commitBoolEdit(cell, boolVal, r, c, oldText);
+      const sel = document.createElement('select');
+      const optTrue = document.createElement('option');
+      optTrue.value = '1'; optTrue.textContent = 'True';
+      const optFalse = document.createElement('option');
+      optFalse.value = '0'; optFalse.textContent = 'False';
+      sel.appendChild(optTrue);
+      sel.appendChild(optFalse);
+      sel.value = oldText === 'True' ? '1' : '0';
+      cell.appendChild(sel); sel.focus();
+      sel.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter')  { e.preventDefault(); commitBoolEdit(cell, sel, r, c, oldText); }
+        if (e.key === 'Escape') { cancelEdit(cell, oldText); }
+        e.stopPropagation();
+      });
+      sel.addEventListener('blur', () => { if (cell.classList.contains('editing')) commitBoolEdit(cell, sel, r, c, oldText); });
       return;
     }
 
@@ -3212,7 +3139,8 @@
     inp.addEventListener('blur', () => { if (cell.classList.contains('editing')) commitEdit(cell, inp, r, c, oldText); });
   }
 
-  function commitBoolEdit(cell, boolVal, r, c, oldText) {
+  function commitBoolEdit(cell, sel, r, c, oldText) {
+    const boolVal = sel.value === '1';
     cell.classList.remove('editing'); cell.innerHTML = '';
     const numVal = boolVal ? 1 : 0;
     cell.textContent = boolVal ? 'True' : 'False';

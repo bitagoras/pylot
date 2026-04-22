@@ -1940,7 +1940,7 @@ export function activate(context: vscode.ExtensionContext) {
                 markdown.appendMarkdown('*... (truncated)*');
             }
         } else {
-            markdown.appendMarkdown(`\n\n*Evaluated successfully (no output)*`);
+            markdown.appendMarkdown(`\n\n*(empty string)*`);
         }
         return markdown;
     }
