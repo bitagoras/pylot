@@ -35,6 +35,36 @@ interface PythonExtensionApi {
     };
 }
 
+/** Types for the Python Environments extension API. */
+interface PythonCommandRunConfiguration {
+    executable: string;
+    args?: string[];
+}
+
+interface PythonEnvironmentExecutionInfo {
+    run: PythonCommandRunConfiguration;
+    activatedRun?: PythonCommandRunConfiguration;
+}
+
+interface PythonEnvironment {
+    readonly envId: { id: string; managerId: string };
+    readonly environmentPath: vscode.Uri;
+    readonly execInfo: PythonEnvironmentExecutionInfo;
+}
+
+interface PythonProcess {
+    readonly stdin: NodeJS.WritableStream;
+    readonly stdout: NodeJS.ReadableStream;
+    readonly stderr: NodeJS.ReadableStream;
+    kill(): void;
+    onExit(listener: (code: number | null, signal: NodeJS.Signals | null) => void): void;
+}
+
+interface PythonEnvironmentApi {
+    getEnvironment(scope?: vscode.Uri): Promise<PythonEnvironment | undefined>;
+    runInBackground(environment: PythonEnvironment, options: { args: string[]; cwd?: string; env?: { [key: string]: string | undefined } }): Promise<PythonProcess>;
+}
+
 type ExecutionStatus = 'idle' | 'running' | 'succeeded' | 'failed' | 'rejected';
 
 interface ExecutionResult {
@@ -48,6 +78,8 @@ interface ExecutionResult {
 let pythonRepl: ChildProcess | null = null;
 let replReady = false;
 let currentPythonPath: string | undefined = undefined;
+let currentEnvId: string | undefined = undefined;
+let currentUseNewExt: boolean | undefined = undefined;
 let currentExecutionCallback: ((success: boolean) => void) | null = null;
 let validationCallback: ((isValid: boolean) => void) | null = null;
 let outputChannel: vscode.OutputChannel;
@@ -505,6 +537,50 @@ export function activate(context: vscode.ExtensionContext) {
 
     // ── Python interpreter discovery ────────────────────────────────────
 
+    /** Resolve the Python Environments extension API. */
+    async function getPythonEnvironmentsApi(): Promise<PythonEnvironmentApi | undefined> {
+        const extension = vscode.extensions.getExtension<PythonEnvironmentApi>('ms-python.vscode-python-envs');
+        if (!extension) {
+            return undefined;
+        }
+        if (!extension.isActive) {
+            await extension.activate();
+        }
+        return extension.exports;
+    }
+
+    let hasShownFallbackWarning = false;
+
+    /**
+     * Resolves the Python environment info based on settings.
+     * Returns an object with the Python path and optionally the PythonEnvironment for the new extension.
+     */
+    async function getPythonEnvInfo(): Promise<{ path?: string; env?: PythonEnvironment } | undefined> {
+        const config = vscode.workspace.getConfiguration('pylot');
+        const useNewExt = config.get<boolean>('usePythonEnvironmentsExtension', false);
+
+        if (useNewExt) {
+            const api = await getPythonEnvironmentsApi();
+            if (api) {
+                try {
+                    const env = await api.getEnvironment();
+                    if (env) {
+                        return { path: env.execInfo.run.executable, env };
+                    }
+                } catch (err) {
+                    logDebug(`[getPythonEnvInfo] Error getting environment from new extension: ${err}`);
+                }
+            }
+            if (!hasShownFallbackWarning) {
+                vscode.window.showWarningMessage('Pylot: Python Environments extension is not available or failed to provide an environment. Falling back to the default Python extension.');
+                hasShownFallbackWarning = true;
+            }
+        }
+
+        const path = await getPythonPath();
+        return path ? { path } : undefined;
+    }
+
     /** Resolve the active Python interpreter via the ms-python extension. */
     async function getPythonPath(): Promise<string | undefined> {
         const pythonExtension = vscode.extensions.getExtension<PythonExtensionApi>('ms-python.python');
@@ -624,7 +700,7 @@ export function activate(context: vscode.ExtensionContext) {
      * Resolves `true` once the REPL prints its ready message, or `false` on
      * timeout / error.
      */
-    async function startPython(pythonPath: string, documentUri?: vscode.Uri): Promise<boolean> {
+    async function startPython(pythonPath: string, documentUri?: vscode.Uri, pythonEnv?: PythonEnvironment): Promise<boolean> {
         if (replStartPromise) {
             logDebug('[startPython] REPL is already starting, awaiting existing promise...');
             return replStartPromise;
@@ -701,14 +777,50 @@ export function activate(context: vscode.ExtensionContext) {
                 }
 
                 logDebug(`[startPython] Spawning REPL process with cwd: ${cwd}`);
-                const startupProcess = spawn(pythonPath, ['-u', replWrapperPath], {
-                    env: env,
-                    cwd: cwd
-                });
+
+                let startupProcess: ChildProcess;
+                if (pythonEnv) {
+                    logDebug(`[startPython] Using runInBackground with Python Environments extension`);
+                    const api = await getPythonEnvironmentsApi();
+                    if (!api) {
+                        logDebug(`[startPython] Python Environments API not found after all`);
+                        resolveOnce(false);
+                        return;
+                    }
+                    const process = await api.runInBackground(pythonEnv, {
+                        args: ['-u', replWrapperPath],
+                        cwd: cwd,
+                        env: env
+                    });
+
+                    // Wrap PythonProcess to match ChildProcess interface for the existing logic
+                    startupProcess = {
+                        stdin: process.stdin,
+                        stdout: process.stdout,
+                        stderr: process.stderr,
+                        kill: () => process.kill(),
+                        on: (event: string, listener: (...args: any[]) => void) => {
+                            if (event === 'close' || event === 'exit') {
+                                process.onExit((code, signal) => listener(code, signal));
+                            } else if (event === 'error') {
+                                // PythonProcess doesn't seem to have an explicit error event in the API
+                                // but we should still satisfy the interface
+                            }
+                            return startupProcess;
+                        }
+                    } as any;
+                } else {
+                    startupProcess = spawn(pythonPath, ['-u', replWrapperPath], {
+                        env: env,
+                        cwd: cwd
+                    });
+                }
                 pythonRepl = startupProcess;
 
                 replReady = false;
                 currentPythonPath = pythonPath;
+                currentEnvId = pythonEnv?.envId.id;
+                currentUseNewExt = config.get<boolean>('usePythonEnvironmentsExtension', false);
 
                 let stdoutBuffer = '';
 
@@ -1286,8 +1398,12 @@ export function activate(context: vscode.ExtensionContext) {
      * @param moveCursor If true, advance the cursor past the executed block.
      */
     async function executeSelectedPython(editor: vscode.TextEditor, moveCursor: boolean, wholeProgram: boolean = false): Promise<ExecutionResult> {
-        const pythonPath = await getPythonPath();
-        if (!pythonPath) { return setLastExecutionResult('rejected', false, false); }
+        const envInfo = await getPythonEnvInfo();
+        if (!envInfo || !envInfo.path) { return setLastExecutionResult('rejected', false, false); }
+
+        const pythonPath = envInfo.path;
+        const envId = envInfo.env?.envId.id;
+        const useNewExt = vscode.workspace.getConfiguration('pylot').get<boolean>('usePythonEnvironmentsExtension', false);
 
         // For untitled files, we may not have document symbols yet.
         const isUntitled = editor.document.uri.scheme === 'untitled';
@@ -1296,13 +1412,13 @@ export function activate(context: vscode.ExtensionContext) {
         // If it isn't active, the SelectionRangeProvider will simply fall back
         // to evaluating the exact text highlighted by the user's cursor.
 
-        // Start REPL if not running or if the interpreter changed
-        if (!pythonRepl || !replReady || currentPythonPath !== pythonPath) {
+        // Start REPL if not running or if the interpreter or extension choice changed
+        if (!pythonRepl || !replReady || currentPythonPath !== pythonPath || currentEnvId !== envId || currentUseNewExt !== useNewExt) {
             stopRepl();
             outputChannel.clear();
             outputChannel.show(true);
 
-            const success = await startPython(pythonPath, editor.document.uri);
+            const success = await startPython(pythonPath, editor.document.uri, envInfo.env);
             if (!success) {
                 // The detailed error message is already shown in the output channel
                 vscode.window.showErrorMessage('Pylot: Failed to start Python REPL. Please check the "Pylot" output panel for details and review your Python interpreter settings and `pylot.replWorkingDirectory`.');
@@ -1712,8 +1828,10 @@ export function activate(context: vscode.ExtensionContext) {
     const restartReplCommand = vscode.commands.registerCommand('pylot.startPython', async () => {
         removeAllColorMarks();
         stopRepl();
-        const pythonPath = await getPythonPath();
-        if (!pythonPath) { return; }
+        const envInfo = await getPythonEnvInfo();
+        if (!envInfo || !envInfo.path) { return; }
+
+        const pythonPath = envInfo.path;
 
         outputChannel.clear();
         outputChannel.show(true);
@@ -1722,7 +1840,7 @@ export function activate(context: vscode.ExtensionContext) {
         const editor = vscode.window.activeTextEditor;
         const config = vscode.workspace.getConfiguration('pylot');
         debugMode = config.get<boolean>('debugMode', false);
-        const success = await startPython(pythonPath, editor?.document.uri);
+        const success = await startPython(pythonPath, editor?.document.uri, envInfo.env);
         if (success) {
             outputChannel.clear();
             if (debugMode) {
@@ -1782,21 +1900,24 @@ export function activate(context: vscode.ExtensionContext) {
 
         logDebug(`[evaluateExpression] Starting execution for file: ${editor.document.fileName}`);
 
-        const pythonPath = await getPythonPath();
-        if (!pythonPath) {
+        const envInfo = await getPythonEnvInfo();
+        if (!envInfo || !envInfo.path) {
             logDebug('[evaluateExpression] No Python path found');
             return;
         }
+        const pythonPath = envInfo.path;
+        const envId = envInfo.env?.envId.id;
+        const useNewExt = vscode.workspace.getConfiguration('pylot').get<boolean>('usePythonEnvironmentsExtension', false);
         logDebug(`[evaluateExpression] Using Python path: ${pythonPath}`);
 
-        // Start REPL if not running or if the interpreter changed
-        if (!pythonRepl || !replReady || currentPythonPath !== pythonPath) {
+        // Start REPL if not running or if the interpreter or extension choice changed
+        if (!pythonRepl || !replReady || currentPythonPath !== pythonPath || currentEnvId !== envId || currentUseNewExt !== useNewExt) {
             logDebug('[evaluateExpression] Restarting REPL due to configuration change');
             stopRepl();
             outputChannel.clear();
             outputChannel.show(true);
 
-            const success = await startPython(pythonPath, editor.document.uri);
+            const success = await startPython(pythonPath, editor.document.uri, envInfo.env);
             if (!success) {
                 logDebug('[evaluateExpression] Failed to start REPL');
                 const errorMsg = editor.document.isUntitled
