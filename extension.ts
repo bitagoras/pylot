@@ -31,7 +31,7 @@ import * as http from 'http';
 /** Subset of the Python extension API used for interpreter discovery. */
 interface PythonExtensionApi {
     environments: {
-        getActiveEnvironmentPath(): { path: string } | undefined;
+        getActiveEnvironmentPath(resource?: vscode.Uri): { path: string } | undefined;
     };
 }
 
@@ -555,7 +555,7 @@ export function activate(context: vscode.ExtensionContext) {
      * Resolves the Python environment info based on settings.
      * Returns an object with the Python path and optionally the PythonEnvironment for the new extension.
      */
-    async function getPythonEnvInfo(): Promise<{ path?: string; env?: PythonEnvironment } | undefined> {
+    async function getPythonEnvInfo(resource?: vscode.Uri): Promise<{ path?: string; env?: PythonEnvironment } | undefined> {
         const config = vscode.workspace.getConfiguration('pylot');
         const useNewExt = config.get<boolean>('usePythonEnvironmentsExtension', false);
 
@@ -563,7 +563,7 @@ export function activate(context: vscode.ExtensionContext) {
             const api = await getPythonEnvironmentsApi();
             if (api) {
                 try {
-                    const env = await api.getEnvironment();
+                    const env = await api.getEnvironment(resource);
                     if (env) {
                         return { path: env.execInfo.run.executable, env };
                     }
@@ -577,12 +577,12 @@ export function activate(context: vscode.ExtensionContext) {
             }
         }
 
-        const path = await getPythonPath();
+        const path = await getPythonPath(resource);
         return path ? { path } : undefined;
     }
 
     /** Resolve the active Python interpreter via the ms-python extension. */
-    async function getPythonPath(): Promise<string | undefined> {
+    async function getPythonPath(resource?: vscode.Uri): Promise<string | undefined> {
         const pythonExtension = vscode.extensions.getExtension<PythonExtensionApi>('ms-python.python');
         if (!pythonExtension) {
             vscode.window.showErrorMessage('Pylot: The Python extension (ms-python.python) is required for this feature. Please install it.');
@@ -593,7 +593,7 @@ export function activate(context: vscode.ExtensionContext) {
             await pythonExtension.activate();
         }
 
-        const environment = pythonExtension.exports.environments.getActiveEnvironmentPath();
+        const environment = pythonExtension.exports.environments.getActiveEnvironmentPath(resource);
         if (!environment?.path) {
             vscode.window.showErrorMessage('Pylot: No Python interpreter selected. Please select an interpreter using the "Python: Select Interpreter" command.');
             return undefined;
@@ -706,7 +706,7 @@ export function activate(context: vscode.ExtensionContext) {
             return replStartPromise;
         }
 
-        replStartPromise = new Promise(async (resolve) => {
+        replStartPromise = new Promise((resolve) => {
             let resolved = false;
             let startupTimeout: ReturnType<typeof setTimeout> | null = null;
             let startupTimedOut = false;
@@ -730,6 +730,10 @@ export function activate(context: vscode.ExtensionContext) {
                 const mplMode = config.get<string>('matplotlibEventHandler', 'auto');
 
                 const pythonDir = path.dirname(pythonPath);
+
+                // Use the environment path if available (from new extension), otherwise use the directory of the python executable
+                const baseEnvDir = pythonEnv ? pythonEnv.environmentPath.fsPath : pythonDir;
+
                 const env: NodeJS.ProcessEnv = {
                     ...process.env,
                     PYTHONIOENCODING: 'utf-8',
@@ -742,9 +746,10 @@ export function activate(context: vscode.ExtensionContext) {
 
                 let binPaths = '';
                 if (process.platform === 'win32') {
-                    binPaths = `${pythonDir}${separator}${path.join(pythonDir, 'Scripts')}${separator}${path.join(pythonDir, 'Library', 'bin')}${separator}`;
+                    // For conda/venv on Windows, bin directories are in the environment root and under Scripts/Library
+                    binPaths = `${baseEnvDir}${separator}${path.join(baseEnvDir, 'Scripts')}${separator}${path.join(baseEnvDir, 'Library', 'bin')}${separator}`;
                 } else {
-                    binPaths = `${pythonDir}${separator}${path.join(pythonDir, 'bin')}${separator}`;
+                    binPaths = `${baseEnvDir}${separator}${path.join(baseEnvDir, 'bin')}${separator}`;
                 }
                 env[pathKey] = binPaths + (env[pathKey] || '');
 
@@ -1398,7 +1403,7 @@ export function activate(context: vscode.ExtensionContext) {
      * @param moveCursor If true, advance the cursor past the executed block.
      */
     async function executeSelectedPython(editor: vscode.TextEditor, moveCursor: boolean, wholeProgram: boolean = false): Promise<ExecutionResult> {
-        const envInfo = await getPythonEnvInfo();
+        const envInfo = await getPythonEnvInfo(editor.document.uri);
         if (!envInfo || !envInfo.path) { return setLastExecutionResult('rejected', false, false); }
 
         const pythonPath = envInfo.path;
@@ -1828,7 +1833,8 @@ export function activate(context: vscode.ExtensionContext) {
     const restartReplCommand = vscode.commands.registerCommand('pylot.startPython', async () => {
         removeAllColorMarks();
         stopRepl();
-        const envInfo = await getPythonEnvInfo();
+        const editor = vscode.window.activeTextEditor;
+        const envInfo = await getPythonEnvInfo(editor?.document.uri);
         if (!envInfo || !envInfo.path) { return; }
 
         const pythonPath = envInfo.path;
@@ -1837,7 +1843,6 @@ export function activate(context: vscode.ExtensionContext) {
         outputChannel.show(true);
         outputChannel.appendLine('[Pylot: Restarting Python ...]');
 
-        const editor = vscode.window.activeTextEditor;
         const config = vscode.workspace.getConfiguration('pylot');
         debugMode = config.get<boolean>('debugMode', false);
         const success = await startPython(pythonPath, editor?.document.uri, envInfo.env);
@@ -1900,7 +1905,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         logDebug(`[evaluateExpression] Starting execution for file: ${editor.document.fileName}`);
 
-        const envInfo = await getPythonEnvInfo();
+        const envInfo = await getPythonEnvInfo(editor.document.uri);
         if (!envInfo || !envInfo.path) {
             logDebug('[evaluateExpression] No Python path found');
             return;
