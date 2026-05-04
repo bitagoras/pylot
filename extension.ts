@@ -706,7 +706,7 @@ export function activate(context: vscode.ExtensionContext) {
             return replStartPromise;
         }
 
-        replStartPromise = new Promise((resolve) => {
+        replStartPromise = new Promise(async (resolve) => {
             let resolved = false;
             let startupTimeout: ReturnType<typeof setTimeout> | null = null;
             let startupTimedOut = false;
