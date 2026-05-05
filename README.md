@@ -22,6 +22,7 @@ Run Python code directly from the editor with smart selection and visual line ma
 - **Matplotlib support** – Keeps multiple Matplotlib plot windows open and interactive while you continue working.
 - **AI agent integration** – Expose the Python REPL to AI coding agents via a built-in MCP server.
 - **Editor toolbar buttons** – Three run buttons appear in the top-right editor toolbar: ▶ (run, keep cursor), ▶| (run and advance cursor), ▶▶ (run whole file).
+- **Python Environments Extension Support** – Optionally use the new [Python Environments extension](https://marketplace.visualstudio.com/items?itemName=ms-python.vscode-python-envs) to start the Python session in an activated environment (e.g., conda) with all environment variables automatically set.
 
 <br>
 
@@ -97,10 +98,12 @@ Pylot provides the following settings to customize its behavior:
 - `pylot.maxInlayHintLength`: Maximum characters for an inlay hint before it is truncated (default: `50`).
 - `pylot.inlayHintColor`: Custom color for the variable overlay in hex format.
 - `pylot.showEditorTitleButtons`: Show or hide the ▶, ▶| and ▶▶ run buttons in the editor toolbar for Python files (default: `true`). Individual buttons can be hidden per VS Code's built-in right-click menu.
+- `pylot.usePythonEnvironmentsExtension`: Use the Python Environments extension to get the Python session. This ensures an activated environment (e.g. conda) with all environment variables. (default: `false`).
 
 ## Requirements
 
 - [Python extension](https://marketplace.visualstudio.com/items?itemName=ms-python.python) (`ms-python.python`) – installed automatically as a dependency.
+- **Optional**: [Python Environments extension](https://marketplace.visualstudio.com/items?itemName=ms-python.vscode-python-envs) – required if `pylot.usePythonEnvironmentsExtension` is enabled. It is recommended to also enable the setting `"python.useEnvironmentsExtension": true` in the core Python extension settings to provide a unified environment experience.
 
 ## Installation
 

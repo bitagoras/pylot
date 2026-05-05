@@ -2,6 +2,12 @@
 
 All notable changes to the **Pylot** extension will be documented in this file.
 
+## [1.13.0] - 2026-04-25
+
+### New Features
+- **Python Environments Extension support**: Added support for the new [Python Environments extension](https://marketplace.visualstudio.com/items?itemName=ms-python.vscode-python-envs) to obtain a fully activated Python session (e.g., conda environments). This ensures that all environment variables and paths are correctly available in the Pylot session.
+- **`pylot.usePythonEnvironmentsExtension`**: New setting to enable the use of the Python Environments extension. When enabled, Pylot will try to get the active environment from the new extension; otherwise, it falls back to the default Python extension.
+
 ## [1.12.1] - 2026-04-22
 
 ### Improvements

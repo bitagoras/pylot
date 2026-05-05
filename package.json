@@ -116,6 +116,11 @@
                     "type": "boolean",
                     "default": true,
                     "description": "Pylot: Show run buttons (▶  ▶|  ▶▶) in the top-right editor toolbar for Python files. Individual buttons can be hidden by right-clicking them."
+                },
+                "pylot.usePythonEnvironmentsExtension": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Pylot: Use the Python Environments extension to get the Python session. This ensures an activated environment (e.g. conda) with all environment variables."
                 }
             }
         },

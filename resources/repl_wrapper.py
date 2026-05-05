@@ -3,28 +3,42 @@ import threading
 import queue
 import builtins
 
+if sys.platform == 'win32':
+    import msvcrt
+    import ctypes
+    from ctypes import wintypes
+
 if '.' not in sys.path:
     sys.path.insert(0, '.')
 
 io_lock = threading.Lock()
-real_stdout = sys.stdout
+# Use binary buffers to bypass Windows TextIOWrapper locks that cause deadlocks with C-extensions
+real_stdout = sys.stdout.buffer
+real_stderr = sys.stderr.buffer
 
 class LockedStdout:
+    def __init__(self, buffer):
+        self.buffer = buffer
     def write(self, s):
+        if isinstance(s, str):
+            b = s.encode('utf-8')
+        else:
+            b = s
         with io_lock:
-            real_stdout.write(s)
-            real_stdout.flush()
+            self.buffer.write(b)
+            self.buffer.flush()
     def flush(self):
         with io_lock:
-            real_stdout.flush()
+            self.buffer.flush()
 
-sys.stdout = LockedStdout()
-sys.stderr = LockedStdout()
+sys.stdout = LockedStdout(real_stdout)
+sys.stderr = LockedStdout(real_stderr)
 
 def send_msg(msg_type, **kwargs):
     kwargs['type'] = msg_type
+    msg = f"<<<PYLOT_JSON>>>{json.dumps(kwargs)}\n".encode('utf-8')
     with io_lock:
-        real_stdout.write(f"<<<PYLOT_JSON>>>{json.dumps(kwargs)}\n")
+        real_stdout.write(msg)
         real_stdout.flush()
 
 def get_locals_summary(changed_keys=None):
@@ -1074,12 +1088,31 @@ if mpl_mode == 'always':
     force_patch_matplotlib()
 
 def read_stdin():
+    # Use binary buffer for reading to avoid Windows TextIOWrapper locks.
+    # On Windows, PeekNamedPipe is used to poll stdin before reading, preventing
+    # the background thread from hanging and deadlocking with C-extensions.
+    stdin_buffer = sys.stdin.buffer
+
+    def poll_stdin_windows():
+        h = msvcrt.get_osfhandle(sys.stdin.fileno())
+        avail = wintypes.DWORD()
+        if ctypes.windll.kernel32.PeekNamedPipe(h, None, 0, None, ctypes.byref(avail), None):
+            return avail.value > 0
+        return False
+
     while True:
         try:
-            line = sys.stdin.readline()
-            if not line:
+            if sys.platform == 'win32':
+                if not poll_stdin_windows():
+                    time.sleep(0.01)
+                    continue
+
+            line_b = stdin_buffer.readline()
+            if not line_b:
                 input_queue.put(None)
                 break
+
+            line = line_b.decode('utf-8', errors='replace')
 
             try:
                 command = json.loads(line.strip())
